@@ -12,7 +12,4 @@ services:
       - key: N8N_ENCRYPTION_KEY
         generateValue: true
       - key: WEBHOOK_URL
-        fromService:
-          type: web
-          name: n8n
-          property: url
+        sync: false
