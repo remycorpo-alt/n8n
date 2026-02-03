@@ -21,7 +21,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://api.render.com/v1/services/{{ $json.service_id }}/deploys?limit=1",
+        "url": "https://api.render.com/v1/services/YOUR_SERVICE_ID/deploys?limit=1",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {}
@@ -30,13 +30,7 @@
       "name": "Get Latest Deploy Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [220, 0],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "RENDER_API_CREDENTIAL_ID",
-          "name": "Render API"
-        }
-      }
+      "position": [250, 0]
     },
     {
       "parameters": {
@@ -65,36 +59,21 @@
       "name": "Is Deploy Failed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.1,
-      "position": [440, 0]
+      "position": [500, 0]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://api.render.com/v1/services/{{ $('Set Config').json.service_id }}/logs",
+        "url": "https://api.render.com/v1/services/YOUR_SERVICE_ID/logs?tail=100",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": {
-          "queryParameters": {
-            "parameters": [
-              {
-                "name": "tail",
-                "value": "100"
-              }
-            ]
-          }
-        }
+        "options": {}
       },
       "id": "get-logs",
       "name": "Get Error Logs",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, -100],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "RENDER_API_CREDENTIAL_ID",
-          "name": "Render API"
-        }
-      }
+      "position": [750, -100]
     },
     {
       "parameters": {
@@ -104,7 +83,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"My n8n deployment on Render has failed. Here is the deploy status and logs. Please analyze the error and suggest a fix:\\n\\nDeploy Status: {{ $('Is Deploy Failed?').json[0].deploy.status }}\\n\\nError Logs:\\n{{ $('Get Error Logs').json.map(l => l.message).join('\\\\n') }}\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"My n8n deployment on Render has failed. Please analyze the error and suggest a fix:\\n\\nDeploy Status: {{ $('Is Deploy Failed?').json[0].deploy.status }}\\n\\nError Logs:\\n{{ JSON.stringify($('Get Error Logs').json) }}\"\n    }\n  ]\n}",
         "options": {
           "headers": {
             "parameters": [
@@ -120,84 +99,23 @@
       "name": "Send to Claude API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, -100],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "ANTHROPIC_API_CREDENTIAL_ID",
-          "name": "Anthropic API"
-        }
-      }
+      "position": [1000, -100]
     },
     {
       "parameters": {
-        "values": {
-          "string": [
-            {
-              "name": "service_id",
-              "value": "YOUR_RENDER_SERVICE_ID"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "set-config",
-      "name": "Set Config",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [0, 0]
-    },
-    {
-      "parameters": {
-        "content": "## Setup Instructions\n\n1. **Get your Render Service ID** from the Render dashboard URL:\n   `https://dashboard.render.com/web/srv-XXXXX` → `srv-XXXXX` is your service ID\n\n2. **Create Render API Credential:**\n   - Go to Render → Account Settings → API Keys\n   - Create a new API key\n   - In n8n, create HTTP Header Auth credential:\n     - Name: `Authorization`\n     - Value: `Bearer YOUR_RENDER_API_KEY`\n\n3. **Create Anthropic API Credential:**\n   - Get API key from console.anthropic.com\n   - In n8n, create HTTP Header Auth credential:\n     - Name: `x-api-key`\n     - Value: `YOUR_ANTHROPIC_API_KEY`\n\n4. **Update the Set Config node** with your Render service ID\n\n5. **Update credential IDs** in the HTTP Request nodes",
-        "height": 420,
-        "width": 340
+        "content": "## Setup Instructions\n\n1. Replace YOUR_SERVICE_ID in:\n   - 'Get Latest Deploy Status' node URL\n   - 'Get Error Logs' node URL\n\n2. Create credentials (see below)\n\n3. Assign credentials to HTTP nodes\n\n---\n\n**Render API Credential:**\n- Type: Header Auth\n- Name: Authorization\n- Value: Bearer YOUR_RENDER_API_KEY\n\n**Anthropic API Credential:**\n- Type: Header Auth  \n- Name: x-api-key\n- Value: YOUR_ANTHROPIC_API_KEY",
+        "height": 380,
+        "width": 300
       },
       "id": "sticky-note",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-400, -200]
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "analysis",
-              "name": "claude_analysis",
-              "value": "={{ $json.content[0].text }}",
-              "type": "string"
-            },
-            {
-              "id": "status",
-              "name": "deploy_status",
-              "value": "={{ $('Is Deploy Failed?').json[0].deploy.status }}",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "format-output",
-      "name": "Format Output",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [1100, -100]
+      "position": [-350, -150]
     }
   ],
   "connections": {
     "Check Every 5 Minutes": {
-      "main": [
-        [
-          {
-            "node": "Set Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Set Config": {
       "main": [
         [
           {
@@ -236,17 +154,6 @@
         [
           {
             "node": "Send to Claude API",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send to Claude API": {
-      "main": [
-        [
-          {
-            "node": "Format Output",
             "type": "main",
             "index": 0
           }
