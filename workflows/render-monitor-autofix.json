@@ -1,0 +1,311 @@
+{
+  "name": "Render Monitor - Claude Auto-Fix",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Check Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/YOUR_SERVICE_ID/deploys?limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "get-deploy-status",
+      "name": "Get Deploy Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-failed",
+              "leftValue": "={{ $json[0].deploy.status }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-if-failed",
+      "name": "Is Deploy Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/YOUR_SERVICE_ID/logs?tail=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "get-logs",
+      "name": "Get Error Logs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, -150]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/YOUR_GITHUB_USERNAME/n8n/contents/Dockerfile",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "get-dockerfile",
+      "name": "Get Dockerfile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/YOUR_GITHUB_USERNAME/n8n/contents/render.yaml",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "get-render-yaml",
+      "name": "Get render.yaml",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 150]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-data",
+      "name": "Merge All Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"My n8n deployment on Render failed. Analyze the error and provide a fix.\\n\\nERROR LOGS:\\n\" + JSON.stringify($('Get Error Logs').json) + \"\\n\\nDOCKERFILE (base64 decode it):\\n\" + $('Get Dockerfile').json.body.content + \"\\n\\nRENDER.YAML (base64 decode it):\\n\" + $('Get render.yaml').json.body.content + \"\\n\\nRespond in this exact JSON format only, no other text:\\n{\\n  \\\"analysis\\\": \\\"brief explanation of the error\\\",\\n  \\\"file_to_fix\\\": \\\"Dockerfile or render.yaml\\\",\\n  \\\"fixed_content\\\": \\\"the complete fixed file content\\\"\\n}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "ask-claude",
+      "name": "Ask Claude for Fix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's response\nconst claudeResponse = $('Ask Claude for Fix').json.content[0].text;\nlet parsed;\ntry {\n  parsed = JSON.parse(claudeResponse);\n} catch(e) {\n  // Try to extract JSON from response\n  const match = claudeResponse.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    parsed = JSON.parse(match[0]);\n  } else {\n    throw new Error('Could not parse Claude response');\n  }\n}\n\n// Get the SHA of the file to update\nconst dockerfileSha = $('Get Dockerfile').json.body.sha;\nconst renderYamlSha = $('Get render.yaml').json.body.sha;\n\n// Determine which file to update\nconst fileToFix = parsed.file_to_fix.toLowerCase();\nlet filePath, sha;\nif (fileToFix.includes('dockerfile')) {\n  filePath = 'Dockerfile';\n  sha = dockerfileSha;\n} else {\n  filePath = 'render.yaml';\n  sha = renderYamlSha;\n}\n\n// Base64 encode the new content\nconst newContent = Buffer.from(parsed.fixed_content).toString('base64');\n\nreturn {\n  analysis: parsed.analysis,\n  file_path: filePath,\n  sha: sha,\n  new_content: newContent,\n  commit_message: 'Auto-fix: ' + parsed.analysis.substring(0, 50)\n};"
+      },
+      "id": "parse-response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 0]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/YOUR_GITHUB_USERNAME/n8n/contents/{{ $json.file_path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{ $json.commit_message }}\",\n  \"content\": \"{{ $json.new_content }}\",\n  \"sha\": \"{{ $json.sha }}\",\n  \"branch\": \"main\"\n}",
+        "options": {}
+      },
+      "id": "push-to-github",
+      "name": "Push Fix to GitHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 0]
+    },
+    {
+      "parameters": {
+        "content": "## Setup Instructions\n\n1. Replace YOUR_SERVICE_ID with your Render service ID (srv-xxx)\n\n2. Replace YOUR_GITHUB_USERNAME with your GitHub username\n\n3. Create credentials:\n   - **Render API**: Header Auth (Authorization: Bearer rnd_xxx)\n   - **Anthropic API**: Header Auth (x-api-key: sk-ant-xxx)\n   - **GitHub API**: Header Auth (Authorization: Bearer ghp_xxx)\n\n4. Assign credentials to nodes:\n   - Get Deploy Status → Render API\n   - Get Error Logs → Render API\n   - Get Dockerfile → GitHub API\n   - Get render.yaml → GitHub API\n   - Ask Claude for Fix → Anthropic API\n   - Push Fix to GitHub → GitHub API",
+        "height": 400,
+        "width": 350
+      },
+      "id": "sticky-note",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-350, -150]
+    }
+  ],
+  "connections": {
+    "Check Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Get Deploy Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Deploy Status": {
+      "main": [
+        [
+          {
+            "node": "Is Deploy Failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Deploy Failed?": {
+      "main": [
+        [
+          {
+            "node": "Get Error Logs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Dockerfile",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get render.yaml",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Error Logs": {
+      "main": [
+        [
+          {
+            "node": "Merge All Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Dockerfile": {
+      "main": [
+        [
+          {
+            "node": "Merge All Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Get render.yaml": {
+      "main": [
+        [
+          {
+            "node": "Merge All Data",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge All Data": {
+      "main": [
+        [
+          {
+            "node": "Ask Claude for Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Claude for Fix": {
+      "main": [
+        [
+          {
+            "node": "Parse Claude Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [
+          {
+            "node": "Push Fix to GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
