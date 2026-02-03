@@ -14,4 +14,4 @@ RUN mkdir -p /home/node/.n8n
 
 EXPOSE 10000
 
-CMD ["n8n", "start"]
+CMD ["/usr/local/bin/n8n", "start"]
