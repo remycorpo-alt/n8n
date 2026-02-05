@@ -36,6 +36,16 @@ services:
         fromDatabase:
           name: n8n-db
           property: password
+      - key: N8N_PORT
+        value: "10000"
+      - key: N8N_PROTOCOL
+        value: "https"
+      - key: N8N_BASIC_AUTH_ACTIVE
+        value: "true"
+      - key: GENERIC_TIMEZONE
+        value: "America/New_York"
+      - key: TZ
+        value: "America/New_York"
 
 databases:
   - name: n8n-db
