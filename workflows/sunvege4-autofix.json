@@ -1,0 +1,239 @@
+{
+  "name": "SunVege-4 Auto-Fix",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "Every 10 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/srv-d52mhcili9vc73fbmtog/deploys?limit=1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "check-render",
+      "name": "Check Render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/remycorpo-alt/SunVege-4/contents/Dockerfile?ref=claude/fix-datascheduler-error-OGAXH",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "get-dockerfile",
+      "name": "Get Dockerfile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/remycorpo-alt/SunVege-4/contents/render.yaml?ref=claude/fix-datascheduler-error-OGAXH",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "get-renderyaml",
+      "name": "Get render.yaml",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all data from previous nodes\nconst renderData = $('Check Render').first().json;\nconst dockerfileData = $('Get Dockerfile').first().json;\nconst renderYamlData = $('Get render.yaml').first().json;\n\n// Get deploy status\nconst deployStatus = renderData[0]?.deploy?.status || 'unknown';\nconst isError = deployStatus !== 'live';\n\n// Decode files (handle missing files)\nlet dockerfile = '';\nlet renderYaml = '';\nlet dockerfileSha = '';\nlet renderYamlSha = '';\n\ntry {\n  if (dockerfileData?.content) {\n    dockerfile = Buffer.from(dockerfileData.content, 'base64').toString('utf8');\n    dockerfileSha = dockerfileData.sha;\n  }\n} catch(e) {}\n\ntry {\n  if (renderYamlData?.content) {\n    renderYaml = Buffer.from(renderYamlData.content, 'base64').toString('utf8');\n    renderYamlSha = renderYamlData.sha;\n  }\n} catch(e) {}\n\nreturn {\n  deployStatus,\n  isError,\n  dockerfile: dockerfile || 'No Dockerfile found',\n  renderYaml: renderYaml || 'No render.yaml found',\n  dockerfileSha,\n  renderYamlSha\n};"
+      },
+      "id": "prepare",
+      "name": "Prepare Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const apiKey = 'YOUR_ANTHROPIC_API_KEY'; // Replace with your key\n\nconst inputData = $input.first().json;\n\nconst body = {\n  model: \"claude-sonnet-4-20250514\",\n  max_tokens: 4096,\n  messages: [{\n    role: \"user\",\n    content: \"Analyze this SunVege-4 Render deployment. Status: \" + inputData.deployStatus + \". Dockerfile: \" + inputData.dockerfile + \". render.yaml: \" + inputData.renderYaml + \". If error fix it. If running suggest ONE optimization. If perfect say COMPLETE. Respond with JSON only: {\\\"status\\\": \\\"fix\\\" or \\\"optimize\\\" or \\\"complete\\\", \\\"file\\\": \\\"Dockerfile\\\" or \\\"render.yaml\\\" or \\\"none\\\", \\\"content\\\": \\\"new file content\\\", \\\"reason\\\": \\\"explanation\\\"}\"\n  }]\n};\n\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.anthropic.com/v1/messages',\n    headers: {\n      'x-api-key': apiKey,\n      'anthropic-version': '2023-06-01',\n      'Content-Type': 'application/json'\n    },\n    body: body\n  });\n  return response;\n} catch (error) {\n  return { error: error.message };\n}"
+      },
+      "id": "ask-claude",
+      "name": "Ask Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get Claude response\nconst claudeResponse = $input.first().json;\nconst prepData = $('Prepare Data').first().json;\n\n// Check for error\nif (claudeResponse.error) {\n  return { action: 'skip', reason: 'API Error: ' + claudeResponse.error };\n}\n\n// Parse response\nlet parsed;\ntry {\n  const text = claudeResponse.content[0].text;\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match ? match[0] : text);\n} catch(e) {\n  return { action: 'skip', reason: 'Could not parse: ' + e.message };\n}\n\n// Check if complete\nif (parsed.status === 'complete' || parsed.file === 'none') {\n  return { action: 'skip', reason: 'Nothing to do: ' + parsed.reason };\n}\n\n// Get correct SHA\nconst sha = parsed.file === 'Dockerfile' ? prepData.dockerfileSha : prepData.renderYamlSha;\n\n// Encode new content\nconst contentBase64 = Buffer.from(parsed.content).toString('base64');\n\nreturn {\n  action: 'update',\n  file: parsed.file,\n  sha: sha,\n  contentBase64: contentBase64,\n  message: parsed.status + ': ' + parsed.reason\n};"
+      },
+      "id": "parse",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "should-update",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "update",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-action",
+      "name": "Should Update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [1540, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const githubToken = 'YOUR_GITHUB_TOKEN'; // Replace with your token\n\nconst inputData = $input.first().json;\n\nif (inputData.action !== 'update') {\n  return { skipped: true, reason: inputData.reason || 'Nothing to update' };\n}\n\nconst file = inputData.file || 'Dockerfile';\nconst branch = 'claude/fix-datascheduler-error-OGAXH';\n\n// First, get the current SHA\nlet currentSha;\ntry {\n  const fileInfo = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://api.github.com/repos/remycorpo-alt/SunVege-4/contents/${file}?ref=${branch}`,\n    headers: {\n      'Authorization': `Bearer ${githubToken}`,\n      'Accept': 'application/vnd.github.v3+json'\n    }\n  });\n  currentSha = fileInfo.sha;\n} catch (e) {\n  return { success: false, error: 'Could not get file SHA: ' + e.message };\n}\n\n// Now push the update\nconst body = {\n  message: inputData.message,\n  content: inputData.contentBase64,\n  sha: currentSha,\n  branch: branch\n};\n\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'PUT',\n    url: `https://api.github.com/repos/remycorpo-alt/SunVege-4/contents/${file}`,\n    headers: {\n      'Authorization': `Bearer ${githubToken}`,\n      'Content-Type': 'application/json',\n      'Accept': 'application/vnd.github.v3+json'\n    },\n    body: body\n  });\n  return { success: true, file: file, sha: currentSha };\n} catch (error) {\n  return { success: false, error: error.message };\n}"
+      },
+      "id": "push",
+      "name": "Push to GitHub",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, -100]
+    },
+    {
+      "parameters": {
+        "content": "## SunVege-4 Auto-Fix Workflow\n\n**Service:** srv-d52mhcili9vc73fbmtog\n**Repo:** remycorpo-alt/SunVege-4\n**Branch:** claude/fix-datascheduler-error-OGAXH\n\n**Setup:**\n1. Replace YOUR_ANTHROPIC_API_KEY in Ask Claude\n2. Replace YOUR_GITHUB_TOKEN in Push to GitHub\n3. Assign Render API credential to Check Render\n4. Assign GitHub API credential to Get Dockerfile & Get render.yaml\n5. Activate the workflow",
+        "height": 280,
+        "width": 280
+      },
+      "id": "note",
+      "name": "Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-300, -100]
+    }
+  ],
+  "connections": {
+    "Every 10 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Check Render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Render": {
+      "main": [
+        [
+          {
+            "node": "Get Dockerfile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Dockerfile": {
+      "main": [
+        [
+          {
+            "node": "Get render.yaml",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get render.yaml": {
+      "main": [
+        [
+          {
+            "node": "Prepare Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Data": {
+      "main": [
+        [
+          {
+            "node": "Ask Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Claude": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Should Update?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Update?": {
+      "main": [
+        [
+          {
+            "node": "Push to GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
