@@ -89,7 +89,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 60,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You write punchy, 4-8 word taglines for Instagram posts about Congress members trading stocks. The tagline appears on the post image, like a punchline.\\n\\nTrade: {{ $json.politician }} ({{ $json.party }}) filed a {{ $json.type }} of ${{ $json.ticker }} worth {{ $json.amount_min ? ('$' + Math.round($json.amount_min/1000) + 'K') : 'undisclosed' }}{{ $json.amount_max ? (' – $' + Math.round($json.amount_max/1000) + 'K') : '' }}.\\n\\nWrite ONE short tagline (4-8 words). No quotes. No explanation. Examples of good ones: \\\"Make it make sense.\\\", \\\"Congress never loses.\\\", \\\"Timing is everything.\\\", \\\"Funny how that works.\\\"\"\n  }]\n}",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 60,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You write punchy, 4-8 word taglines for Instagram posts about Congress members trading stocks. The tagline appears on the post image, like a punchline. The brand slogan is 'Trade like an insider.' — you can vary it or write something equally sharp.\\n\\nTrade: {{ $json.politician }} ({{ $json.party }}) filed a {{ $json.type }} of ${{ $json.ticker }} worth {{ $json.amount_min ? ('$' + Math.round($json.amount_min/1000) + 'K') : 'undisclosed' }}{{ $json.amount_max ? (' – $' + Math.round($json.amount_max/1000) + 'K') : '' }}.\\n\\nWrite ONE short tagline (4-8 words). No quotes. No explanation. Examples of good ones: \\\"Trade like an insider.\\\", \\\"Congress never loses.\\\", \\\"Timing is everything.\\\", \\\"Funny how that works.\\\"\"\n  }]\n}",
         "options": {
           "timeout": 20000,
           "headers": {
@@ -108,7 +108,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Merge Claude tagline with original trade data\nconst claudeResp = $input.first().json;\nconst trade      = $('Check If New Trade').first().json;\nconst rawTagline = claudeResp?.content?.[0]?.text?.trim() || 'Make it make sense.';\n// Strip surrounding quotes if Claude added them\nconst tagline = rawTagline.replace(/^[\"'""'']|[\"'""'']$/g, '').trim();\nreturn [{ json: { ...trade, tagline } }];"
+        "jsCode": "// Merge Claude tagline with original trade data\nconst claudeResp = $input.first().json;\nconst trade      = $('Check If New Trade').first().json;\nconst rawTagline = claudeResp?.content?.[0]?.text?.trim() || 'Trade like an insider.';\n// Strip surrounding quotes if Claude added them\nconst tagline = rawTagline.replace(/^[\"'""'']|[\"'""'']$/g, '').trim();\nreturn [{ json: { ...trade, tagline } }];"
       },
       "id": "6-merge-tagline",
       "name": "Merge Tagline",

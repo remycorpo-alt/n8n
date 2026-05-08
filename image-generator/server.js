@@ -181,7 +181,7 @@ function drawTradeCard(trade) {
   });
 
   // ── Tagline ─────────────────────────────────────────────
-  const tagline = trade.tagline || 'Make it make sense.';
+  const tagline = trade.tagline || 'Trade like an insider.';
   const tagSize = fitText(ctx, tagline, 900, 58, 'bold');
   const taglineY = tableY + tableH + 72;
   ctx.font      = `bold ${tagSize}px ${FONT}`;
