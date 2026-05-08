@@ -13,3 +13,25 @@ services:
         generateValue: true
       - key: WEBHOOK_URL
         sync: false
+      - key: INSIDER_OPTION_API_URL
+        sync: false
+      - key: IMAGE_GENERATOR_URL
+        sync: false
+      - key: IG_USER_ID
+        sync: false
+      - key: IG_ACCESS_TOKEN
+        sync: false
+
+  - type: web
+    name: insider-option-image-gen
+    runtime: docker
+    plan: starter
+    rootDir: image-generator
+    healthCheckPath: /health
+    envVars:
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

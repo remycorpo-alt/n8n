@@ -1,0 +1,222 @@
+{
+  "name": "Insider Option – Instagram Congress Trade Poster",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Setup Checklist\n\n**Env vars to set in n8n:**\n- `INSIDER_OPTION_API_URL` — base URL of your Insider Option backend\n- `IMAGE_GENERATOR_URL` — URL of the image-generator Render service\n- `IG_USER_ID` — Instagram Business Account ID\n- `IG_ACCESS_TOKEN` — long-lived Facebook/Instagram access token\n\n**How to get IG credentials:**\n1. Create a Facebook Developer App\n2. Add Instagram Graph API product\n3. Connect your Instagram Business Account\n4. Generate a long-lived User Access Token\n5. Find your IG User ID via:\n   `GET https://graph.facebook.com/me?fields=id&access_token=TOKEN`\n\n**Insider Option API contract:**\nThe workflow expects `GET /api/trades/congress/latest` to return:\n```json\n{\n  \"id\": \"unique-trade-id\",\n  \"ticker\": \"NVDA\",\n  \"politician\": \"Nancy Pelosi\",\n  \"party\": \"Democrat\",\n  \"type\": \"Purchase\",\n  \"amount_min\": 500000,\n  \"amount_max\": 1000000,\n  \"trade_date\": \"2024-01-10\",\n  \"filed_date\": \"2024-01-15\",\n  \"asset_description\": \"NVIDIA Corporation\"\n}\n```",
+        "height": 500,
+        "width": 420
+      },
+      "id": "sticky-setup",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-460, -200]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "1-schedule",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/trades/congress/latest",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "2-get-trade",
+      "name": "Get Latest Congress Trade",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Track the last posted trade ID across executions\nconst staticData = $getWorkflowStaticData('global');\nconst lastTradeId = staticData.lastTradeId || null;\nconst trade = $input.first().json;\nconst isNew = !lastTradeId || String(trade.id) !== String(lastTradeId);\nreturn [{ json: { ...trade, isNew } }];"
+      },
+      "id": "3-check-new",
+      "name": "Check If New Trade",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-new",
+              "leftValue": "={{ $json.isNew }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4-is-new",
+      "name": "Is New Trade?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMAGE_GENERATOR_URL }}/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, politician: $json.politician, party: $json.party, type: $json.type, amount_min: $json.amount_min, amount_max: $json.amount_max, trade_date: $json.trade_date, filed_date: $json.filed_date, asset_description: $json.asset_description, id: $json.id }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "5-gen-image",
+      "name": "Generate Trade Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge imageUrl from image generator with original trade data for caption\nconst imageData = $input.first().json;\nconst trade = $('Check If New Trade').first().json;\n\nfunction formatAmount(min, max) {\n  const fmt = n => n >= 1e6 ? `$${(n/1e6).toFixed(1)}M` : `$${Math.round(n/1e3)}K`;\n  if (!min && !max) return 'Undisclosed';\n  if (!max) return `${fmt(min)}+`;\n  return `${fmt(min)} – ${fmt(max)}`;\n}\n\nconst isBuy = /purchase|buy/i.test(trade.type || '');\nconst action = isBuy ? '🟢 BUY' : '🔴 SELL';\nconst amount = formatAmount(trade.amount_min, trade.amount_max);\nconst ticker = trade.ticker || '';\n\nconst caption = [\n  `${action} ALERT 🚨`,\n  ``,\n  `${trade.politician} (${trade.party}) just traded $${ticker}`,\n  ``,\n  `💰 Amount: ${amount}`,\n  `📅 Trade Date: ${trade.trade_date || 'Unknown'}`,\n  `📋 Disclosed: ${trade.filed_date || 'Unknown'}`,\n  ``,\n  `Should everyday investors have the same access? 🤔`,\n  ``,\n  `#CongressTrades #InsiderTrading #${ticker} #StockMarket #InsiderOption #WallStreet #Investing`,\n].join('\\n');\n\nreturn [{ json: { ...trade, imageUrl: imageData.imageUrl, caption } }];"
+      },
+      "id": "6-build-caption",
+      "name": "Build Instagram Caption",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.IG_USER_ID }}/media",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"image_url\": \"{{ $json.imageUrl }}\",\n  \"caption\": {{ JSON.stringify($json.caption) }},\n  \"access_token\": \"{{ $env.IG_ACCESS_TOKEN }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "7-ig-create",
+      "name": "Create IG Media Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass through container id + trade data for publish step\nconst container = $input.first().json;\nconst trade = $('Build Instagram Caption').first().json;\nreturn [{ json: { ...trade, containerId: container.id } }];"
+      },
+      "id": "8-save-container-id",
+      "name": "Save Container ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 180]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "9-wait",
+      "name": "Wait 30s (IG Processing)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1920, 180],
+      "webhookId": "ig-wait-30s"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.IG_USER_ID }}/media_publish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"creation_id\": \"{{ $json.containerId }}\",\n  \"access_token\": \"{{ $env.IG_ACCESS_TOKEN }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "10-ig-publish",
+      "name": "Publish to Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Persist last posted trade ID so we don't re-post on next poll\nconst staticData = $getWorkflowStaticData('global');\nconst trade = $('Save Container ID').first().json;\nstaticData.lastTradeId = String(trade.id);\nreturn [{ json: { success: true, postedTradeId: trade.id, igPostId: $input.first().json.id } }];"
+      },
+      "id": "11-save-last-id",
+      "name": "Save Last Trade ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 180]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [[{ "node": "Get Latest Congress Trade", "type": "main", "index": 0 }]]
+    },
+    "Get Latest Congress Trade": {
+      "main": [[{ "node": "Check If New Trade", "type": "main", "index": 0 }]]
+    },
+    "Check If New Trade": {
+      "main": [[{ "node": "Is New Trade?", "type": "main", "index": 0 }]]
+    },
+    "Is New Trade?": {
+      "main": [
+        [{ "node": "Generate Trade Image", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Generate Trade Image": {
+      "main": [[{ "node": "Build Instagram Caption", "type": "main", "index": 0 }]]
+    },
+    "Build Instagram Caption": {
+      "main": [[{ "node": "Create IG Media Container", "type": "main", "index": 0 }]]
+    },
+    "Create IG Media Container": {
+      "main": [[{ "node": "Save Container ID", "type": "main", "index": 0 }]]
+    },
+    "Save Container ID": {
+      "main": [[{ "node": "Wait 30s (IG Processing)", "type": "main", "index": 0 }]]
+    },
+    "Wait 30s (IG Processing)": {
+      "main": [[{ "node": "Publish to Instagram", "type": "main", "index": 0 }]]
+    },
+    "Publish to Instagram": {
+      "main": [[{ "node": "Save Last Trade ID", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  }
+}
