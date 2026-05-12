@@ -20,15 +20,25 @@
     },
     {
       "parameters": {
+        "jsCode": "const base = $env.IMAGE_GENERATOR_URL.replace(/\\/$/, '');\nreturn [{ json: { healthUrl: base + '/health' } }];"
+      },
+      "id": "build-url",
+      "name": "Build Health URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
         "method": "GET",
-        "url": "={{ $env.IMAGE_GENERATOR_URL }}/health",
+        "url": "={{ $json.healthUrl }}",
         "options": { "timeout": 30000 }
       },
       "id": "ping-health",
       "name": "Ping Image Generator",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [240, 0]
+      "position": [480, 0]
     },
     {
       "parameters": {
@@ -45,6 +55,9 @@
   ],
   "connections": {
     "Every 10 Minutes": {
+      "main": [[{ "node": "Build Health URL", "type": "main", "index": 0 }]]
+    },
+    "Build Health URL": {
       "main": [[{ "node": "Ping Image Generator", "type": "main", "index": 0 }]]
     }
   },
