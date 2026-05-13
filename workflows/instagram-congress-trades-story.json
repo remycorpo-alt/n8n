@@ -1,0 +1,253 @@
+{
+  "name": "Insider Option – Instagram Congress Trade Story Poster",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Instagram Stories variant\n\nSame env vars as the feed workflow:\n\n| Variable | Value |\n|---|---|\n| `INSIDER_OPTION_API_URL` | base URL of your backend |\n| `IMAGE_GENERATOR_URL` | your image-gen Render service URL |\n| `ANTHROPIC_API_KEY` | from console.anthropic.com |\n| `IG_USER_ID` | Instagram Business Account ID |\n| `IG_ACCESS_TOKEN` | long-lived IG access token |\n\nThis workflow calls `/generate-story` (1080×1920) and posts\nwith `media_type: STORIES`. Stories have no caption.\n\nDeduplication uses `lastStoryTradeId` in workflow static data,\nindependent of the feed workflow's `lastTradeId`.",
+        "height": 460,
+        "width": 440
+      },
+      "id": "sticky-setup",
+      "name": "Setup Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-500, -220]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "1-schedule",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/trades/congress/latest",
+        "options": { "timeout": 10000 }
+      },
+      "id": "2-get-trade",
+      "name": "Get Latest Congress Trade",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst lastStoryTradeId = staticData.lastStoryTradeId || null;\nconst trade = $input.first().json;\nconst isNew = !lastStoryTradeId || String(trade.id) !== String(lastStoryTradeId);\nreturn [{ json: { ...trade, isNew } }];"
+      },
+      "id": "3-check-new",
+      "name": "Check If New Trade",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-new",
+              "leftValue": "={{ $json.isNew }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4-is-new",
+      "name": "Is New Trade?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 60,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You write punchy, 4-8 word taglines for Instagram Stories about Congress members trading stocks. The tagline appears on the story image, like a punchline. The brand slogan is 'Trade like an insider.' — you can vary it or write something equally sharp.\\n\\nTrade: {{ $json.politician }} ({{ $json.party }}) filed a {{ $json.type }} of ${{ $json.ticker }} worth {{ $json.amount_min ? ('$' + Math.round($json.amount_min/1000) + 'K') : 'undisclosed' }}{{ $json.amount_max ? (' – $' + Math.round($json.amount_max/1000) + 'K') : '' }}.\\n\\nWrite ONE short tagline (4-8 words). No quotes. No explanation. Examples of good ones: \\\"Trade like an insider.\\\", \\\"Congress never loses.\\\", \\\"Timing is everything.\\\", \\\"Funny how that works.\\\"\"\n  }]\n}",
+        "options": {
+          "timeout": 20000,
+          "headers": {
+            "parameters": [
+              { "name": "x-api-key",          "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+              { "name": "anthropic-version",   "value": "2023-06-01" }
+            ]
+          }
+        }
+      },
+      "id": "5-claude-tagline",
+      "name": "Generate Tagline (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const claudeResp = $input.first().json;\nconst trade      = $('Check If New Trade').first().json;\nconst rawTagline = claudeResp?.content?.[0]?.text?.trim() || 'Trade like an insider.';\nconst tagline    = rawTagline.replace(/^[\"'\\u201C\\u201D\\u2018\\u2019]|[\"'\\u201C\\u201D\\u2018\\u2019]$/g, '').trim();\nreturn [{ json: { ...trade, tagline } }];"
+      },
+      "id": "6-merge-tagline",
+      "name": "Merge Tagline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.IMAGE_GENERATOR_URL }}/generate-story",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, politician: $json.politician, party: $json.party, age: $json.age, job_title: $json.job_title, type: $json.type, amount_min: $json.amount_min, amount_max: $json.amount_max, trade_date: $json.trade_date, filed_date: $json.filed_date, tagline: $json.tagline, id: $json.id }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "7-gen-image",
+      "name": "Generate Story Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const imageData = $input.first().json;\nconst trade     = $('Merge Tagline').first().json;\nreturn [{ json: { ...trade, imageUrl: imageData.imageUrl } }];"
+      },
+      "id": "8-merge-image",
+      "name": "Merge Image URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.IG_USER_ID }}/media",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"image_url\": \"{{ $json.imageUrl }}\",\n  \"media_type\": \"STORIES\",\n  \"access_token\": \"{{ $env.IG_ACCESS_TOKEN }}\"\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "9-ig-create",
+      "name": "Create IG Story Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const container = $input.first().json;\nconst trade     = $('Merge Image URL').first().json;\nreturn [{ json: { ...trade, containerId: container.id } }];"
+      },
+      "id": "10-save-container",
+      "name": "Save Container ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 180]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "11-wait",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2400, 180],
+      "webhookId": "ig-story-wait-30s"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.IG_USER_ID }}/media_publish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"creation_id\": \"{{ $json.containerId }}\",\n  \"access_token\": \"{{ $env.IG_ACCESS_TOKEN }}\"\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "12-ig-publish",
+      "name": "Publish Story to Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2640, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade      = $('Save Container ID').first().json;\nstaticData.lastStoryTradeId = String(trade.id);\nreturn [{ json: { success: true, postedTradeId: trade.id, igStoryId: $input.first().json.id } }];"
+      },
+      "id": "13-save-last-id",
+      "name": "Save Last Story Trade ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 180]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [[{ "node": "Get Latest Congress Trade", "type": "main", "index": 0 }]]
+    },
+    "Get Latest Congress Trade": {
+      "main": [[{ "node": "Check If New Trade", "type": "main", "index": 0 }]]
+    },
+    "Check If New Trade": {
+      "main": [[{ "node": "Is New Trade?", "type": "main", "index": 0 }]]
+    },
+    "Is New Trade?": {
+      "main": [
+        [{ "node": "Generate Tagline (Claude)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Generate Tagline (Claude)": {
+      "main": [[{ "node": "Merge Tagline", "type": "main", "index": 0 }]]
+    },
+    "Merge Tagline": {
+      "main": [[{ "node": "Generate Story Image", "type": "main", "index": 0 }]]
+    },
+    "Generate Story Image": {
+      "main": [[{ "node": "Merge Image URL", "type": "main", "index": 0 }]]
+    },
+    "Merge Image URL": {
+      "main": [[{ "node": "Create IG Story Container", "type": "main", "index": 0 }]]
+    },
+    "Create IG Story Container": {
+      "main": [[{ "node": "Save Container ID", "type": "main", "index": 0 }]]
+    },
+    "Save Container ID": {
+      "main": [[{ "node": "Wait 30s", "type": "main", "index": 0 }]]
+    },
+    "Wait 30s": {
+      "main": [[{ "node": "Publish Story to Instagram", "type": "main", "index": 0 }]]
+    },
+    "Publish Story to Instagram": {
+      "main": [[{ "node": "Save Last Story Trade ID", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}
