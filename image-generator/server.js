@@ -242,12 +242,159 @@ async function uploadToCloudinary(buffer) {
   });
 }
 
+/* ─── story card renderer (1080 × 1920) ─────────────────── */
+
+function drawStoryCard(trade) {
+  const W = 1080, H = 1920;
+  const cx = W / 2;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Radial glow in the centre for drama
+  const glow = ctx.createRadialGradient(cx, H * 0.42, 80, cx, H * 0.42, 680);
+  glow.addColorStop(0, 'rgba(74,222,128,0.07)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // Vignette
+  const vig = ctx.createRadialGradient(cx, H * 0.5, H * 0.2, cx, H * 0.5, H * 0.75);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.6)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, W, H);
+
+  // Header label (inside story safe zone ~y=280)
+  const tradeDate = formatDate(trade.trade_date || trade.filed_date);
+  const headerText = tradeDate ? `NEW CONGRESS TRADE · ${tradeDate}` : 'NEW CONGRESS TRADE';
+  ctx.font = `500 26px ${FONT}`;
+  ctx.fillStyle = C.green;
+  ctx.textAlign = 'center';
+  ctx.letterSpacing = '3px';
+  ctx.fillText(headerText, cx, 310);
+  ctx.letterSpacing = '0px';
+
+  // Giant ticker
+  const ticker = (trade.ticker || '???').toUpperCase();
+  const tickerSize = fitText(ctx, ticker, 960, 260, '900');
+  ctx.font = `900 ${tickerSize}px ${FONT}`;
+  ctx.fillStyle = C.green;
+  ctx.textAlign = 'center';
+  ctx.fillText(ticker, cx, 310 + tickerSize * 1.08);
+
+  // BUY / SELL badge
+  const isBuy = /purchase|buy/i.test(trade.type || '');
+  const badgeLabel = isBuy ? '▲  BUY ORDER' : '▼  SELL ORDER';
+  ctx.font = `600 30px ${FONT}`;
+  const badgeW = ctx.measureText(badgeLabel).width + 60;
+  const badgeH = 56;
+  const badgeX = cx - badgeW / 2;
+  const badgeY = 660;
+  roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 10);
+  ctx.strokeStyle = C.green;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(74,222,128,0.08)';
+  ctx.fill();
+  ctx.fillStyle = C.green;
+  ctx.textAlign = 'center';
+  ctx.fillText(badgeLabel, cx, badgeY + 37);
+
+  // Table card
+  const rows = buildRows(trade);
+  const rowH = 80;
+  const tableY = 756;
+  const tableX = 55;
+  const tableW = W - 110;
+  const tableH = rows.length * rowH + 2;
+
+  roundRect(ctx, tableX, tableY, tableW, tableH, 20);
+  ctx.fillStyle = C.card;
+  ctx.fill();
+  ctx.strokeStyle = C.cardBorder;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  rows.forEach((row, i) => {
+    const y = tableY + i * rowH;
+    if (i > 0) {
+      ctx.strokeStyle = C.rowLine;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tableX + 32, y);
+      ctx.lineTo(tableX + tableW - 32, y);
+      ctx.stroke();
+    }
+    const midY = y + rowH / 2 + 11;
+
+    ctx.font = `500 19px ${FONT}`;
+    ctx.fillStyle = C.dimGreen;
+    ctx.textAlign = 'left';
+    ctx.letterSpacing = '2px';
+    ctx.fillText(row.label, tableX + 44, midY);
+    ctx.letterSpacing = '0px';
+
+    ctx.font = `700 32px ${FONT}`;
+    ctx.fillStyle = row.green ? C.green : C.white;
+    ctx.textAlign = 'left';
+    ctx.fillText(row.value, tableX + 300, midY);
+  });
+
+  // Tagline (inside safe zone bottom ~y=1670)
+  const tagline = trade.tagline || 'Trade like an insider.';
+  const tagY = tableY + tableH + 100;
+  const tagSize = fitText(ctx, tagline, 960, 72, 'bold');
+  ctx.font = `bold ${tagSize}px ${FONT}`;
+  ctx.fillStyle = C.white;
+  ctx.textAlign = 'center';
+  ctx.fillText(tagline, cx, tagY);
+
+  // Sub-caption
+  const politician = trade.politician || '';
+  const pronoun = guessPronoun(politician);
+  ctx.font = `400 27px ${FONT}`;
+  ctx.fillStyle = C.subGreen;
+  ctx.textAlign = 'center';
+  ctx.fillText(`Track ${pronoun} next trade · insideroption.com ↗`, cx, tagY + 60);
+
+  return canvas.toBuffer('image/png');
+}
+
 /* ─── HTTP server ────────────────────────────────────────── */
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/generate-story') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const trade = JSON.parse(body);
+        const png   = drawStoryCard(trade);
+
+        if (process.env.CLOUDINARY_CLOUD_NAME) {
+          const imageUrl = await uploadToCloudinary(png);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ imageUrl }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': png.length });
+          res.end(png);
+        }
+      } catch (e) {
+        console.error(e);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
 
