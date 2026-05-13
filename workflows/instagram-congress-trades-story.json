@@ -119,7 +119,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.IMAGE_GENERATOR_URL }}/generate-story",
+        "url": "https://n8n-1-21iz.onrender.com/generate-story",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, politician: $json.politician, party: $json.party, age: $json.age, job_title: $json.job_title, type: $json.type, amount_min: $json.amount_min, amount_max: $json.amount_max, trade_date: $json.trade_date, filed_date: $json.filed_date, tagline: $json.tagline, id: $json.id }) }}",
