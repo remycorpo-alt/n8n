@@ -1,0 +1,67 @@
+{
+  "name": "Render Keep-Alive – Image Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 10 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $env.IMAGE_GENERATOR_URL.replace(/\\/$/, '');\nreturn [{ json: { healthUrl: base + '/health' } }];"
+      },
+      "id": "build-url",
+      "name": "Build Health URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.healthUrl }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "ping-health",
+      "name": "Ping Image Generator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "content": "## Render Keep-Alive\n\nPings the image-generator `/health` endpoint every 10 minutes\nto prevent Render's free-tier service from sleeping.\n\n**Requires:** `IMAGE_GENERATOR_URL` env var set in n8n\n(same variable used by the Instagram poster workflow).",
+        "height": 200,
+        "width": 340
+      },
+      "id": "sticky-note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-400, -120]
+    }
+  ],
+  "connections": {
+    "Every 10 Minutes": {
+      "main": [[{ "node": "Build Health URL", "type": "main", "index": 0 }]]
+    },
+    "Build Health URL": {
+      "main": [[{ "node": "Ping Image Generator", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

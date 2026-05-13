@@ -83,6 +83,16 @@
     },
     {
       "parameters": {
+        "jsCode": "// Lock this trade ID immediately so concurrent executions skip it.\n// Do NOT move this after the 30s wait — that's what caused double-posts.\nconst staticData = $getWorkflowStaticData('global');\nstaticData.lastTradeId = String($json.id);\nreturn [{ json: $json }];"
+      },
+      "id": "4b-lock-trade",
+      "name": "Lock Trade ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
         "authentication": "genericCredentialType",
@@ -123,13 +133,16 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, politician: $json.politician, party: $json.party, age: $json.age, job_title: $json.job_title, type: $json.type, amount_min: $json.amount_min, amount_max: $json.amount_max, trade_date: $json.trade_date, filed_date: $json.filed_date, tagline: $json.tagline, id: $json.id }) }}",
-        "options": { "timeout": 30000 }
+        "options": { "timeout": 90000 }
       },
       "id": "7-gen-image",
       "name": "Generate Trade Image",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1440, 180]
+      "position": [1440, 180],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
     },
     {
       "parameters": {
@@ -196,7 +209,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade      = $('Save Container ID').first().json;\nstaticData.lastTradeId = String(trade.id);\nreturn [{ json: { success: true, postedTradeId: trade.id, igPostId: $input.first().json.id } }];"
+        "jsCode": "const trade = $('Save Container ID').first().json;\n// ID was already saved by Lock Trade ID node — this is just the success log.\nreturn [{ json: {\n  success: true,\n  postedTradeId: trade.id,\n  ticker: trade.ticker,\n  politician: trade.politician,\n  trade_date: trade.trade_date,\n  igPostId: $input.first().json.id,\n  postedAt: new Date().toISOString()\n} }];"
       },
       "id": "13-save-last-id",
       "name": "Save Last Trade ID",
@@ -217,9 +230,12 @@
     },
     "Is New Trade?": {
       "main": [
-        [{ "node": "Generate Tagline (Claude)", "type": "main", "index": 0 }],
+        [{ "node": "Lock Trade ID", "type": "main", "index": 0 }],
         []
       ]
+    },
+    "Lock Trade ID": {
+      "main": [[{ "node": "Generate Tagline (Claude)", "type": "main", "index": 0 }]]
     },
     "Generate Tagline (Claude)": {
       "main": [[{ "node": "Merge Tagline", "type": "main", "index": 0 }]]
