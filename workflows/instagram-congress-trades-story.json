@@ -85,19 +85,19 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",        "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type",      "value": "application/json" }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 60,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You write punchy, 4-8 word taglines for Instagram Stories about Congress members trading stocks. The tagline appears on the story image, like a punchline. The brand slogan is 'Trade like an insider.' — you can vary it or write something equally sharp.\\n\\nTrade: {{ $json.politician }} ({{ $json.party }}) filed a {{ $json.type }} of ${{ $json.ticker }} worth {{ $json.amount_min ? ('$' + Math.round($json.amount_min/1000) + 'K') : 'undisclosed' }}{{ $json.amount_max ? (' – $' + Math.round($json.amount_max/1000) + 'K') : '' }}.\\n\\nWrite ONE short tagline (4-8 words). No quotes. No explanation. Examples of good ones: \\\"Trade like an insider.\\\", \\\"Congress never loses.\\\", \\\"Timing is everything.\\\", \\\"Funny how that works.\\\"\"\n  }]\n}",
         "options": {
-          "timeout": 20000,
-          "headers": {
-            "parameters": [
-              { "name": "x-api-key",          "value": "={{ $env.ANTHROPIC_API_KEY }}" },
-              { "name": "anthropic-version",   "value": "2023-06-01" }
-            ]
-          }
+          "timeout": 20000
         }
       },
       "id": "5-claude-tagline",
