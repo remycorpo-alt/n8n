@@ -18,9 +18,9 @@ RUN apk add --no-cache \
 # Download Inter font (Black + Bold + Regular) for crisp display text
 RUN mkdir -p /app/fonts && \
   curl -sL "https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip" -o /tmp/inter.zip && \
-  unzip -j /tmp/inter.zip "Inter Desktop/Inter-Black.otf" -d /app/fonts/ && \
-  unzip -j /tmp/inter.zip "Inter Desktop/Inter-Bold.otf"  -d /app/fonts/ && \
-  unzip -j /tmp/inter.zip "Inter Desktop/Inter-Regular.otf" -d /app/fonts/ && \
+  unzip -j /tmp/inter.zip "*Inter-Black.otf"   -d /app/fonts/ && \
+  unzip -j /tmp/inter.zip "*Inter-Bold.otf"    -d /app/fonts/ && \
+  unzip -j /tmp/inter.zip "*Inter-Regular.otf" -d /app/fonts/ && \
   cp /app/fonts/*.otf /usr/share/fonts/ && \
   fc-cache -fv && \
   rm /tmp/inter.zip
