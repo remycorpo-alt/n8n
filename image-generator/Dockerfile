@@ -21,7 +21,7 @@ RUN mkdir -p /app/fonts && \
   unzip -j /tmp/inter.zip "*Inter-Black.otf"   -d /app/fonts/ && \
   unzip -j /tmp/inter.zip "*Inter-Bold.otf"    -d /app/fonts/ && \
   unzip -j /tmp/inter.zip "*Inter-Regular.otf" -d /app/fonts/ && \
-  cp /app/fonts/*.otf /usr/share/fonts/ && \
+  mkdir -p /usr/share/fonts/ && cp /app/fonts/*.otf /usr/share/fonts/ && \
   fc-cache -fv && \
   rm /tmp/inter.zip
 
