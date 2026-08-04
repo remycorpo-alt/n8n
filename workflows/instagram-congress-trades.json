@@ -55,14 +55,48 @@
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade = $input.first().json;\n\nconst tradeId = String(trade.id ?? '');\nconst ticker = String(trade.ticker ?? '').trim().toUpperCase();\nconst lastTradeId = staticData.lastTradeId == null\n  ? null\n  : String(staticData.lastTradeId);\n\nconst recentPublishedTickers = Array.isArray(staticData.recentPublishedTickers)\n  ? staticData.recentPublishedTickers\n      .map(value => String(value).trim().toUpperCase())\n      .filter(Boolean)\n      .slice(-10)\n  : [];\n\nconst isNewTrade = !lastTradeId || tradeId !== lastTradeId;\nconst tickerInLast10Posts = Boolean(ticker) && recentPublishedTickers.includes(ticker);\nconst shouldPublish = isNewTrade && !tickerInLast10Posts;\n\n// Mark every new transaction as seen, including one skipped because its\n// ticker appeared in the last 10 successfully published posts.\nif (isNewTrade) {\n  staticData.lastTradeId = tradeId;\n}\n\nreturn [{\n  json: {\n    ...trade,\n    ticker,\n    isNew: shouldPublish,\n    skipReason: !isNewTrade\n      ? 'duplicate_trade_id'\n      : tickerInLast10Posts\n        ? 'ticker_in_last_10_posts'\n        : null,\n    recentPublishedTickers,\n  },\n}];"
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.IG_USER_ID }}/media",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "id,caption,timestamp"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.IG_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "2b-get-recent-posts",
+      "name": "Get Last 10 Instagram Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade = $('Get Latest Congress Trade').first().json;\nconst recentResponse = $input.first().json;\n\nconst tradeId = String(trade.id ?? '');\nconst ticker = String(trade.ticker ?? '').trim().toUpperCase();\nconst lastTradeId = staticData.lastTradeId == null\n  ? null\n  : String(staticData.lastTradeId);\n\nconst recentPosts = Array.isArray(recentResponse.data)\n  ? recentResponse.data.slice(0, 10)\n  : [];\n\n// Match the exact cashtag or hashtag, so ticker T does not match TSLA.\nconst escapedTicker = ticker.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\nconst tickerPattern = ticker\n  ? new RegExp(`(?:\\\\$|#)${escapedTicker}(?![A-Z0-9.])`, 'i')\n  : null;\n\nconst matchingPost = tickerPattern\n  ? recentPosts.find(post => tickerPattern.test(String(post.caption ?? '')))\n  : null;\n\nconst isNewTrade = !lastTradeId || tradeId !== lastTradeId;\nconst tickerInLast10Posts = Boolean(matchingPost);\nconst shouldPublish = isNewTrade && !tickerInLast10Posts;\n\n// Mark every new transaction as seen, including one skipped because its\n// ticker appeared in the last 10 Instagram feed posts.\nif (isNewTrade) {\n  staticData.lastTradeId = tradeId;\n}\n\nreturn [{\n  json: {\n    ...trade,\n    ticker,\n    isNew: shouldPublish,\n    skipReason: !isNewTrade\n      ? 'duplicate_trade_id'\n      : tickerInLast10Posts\n        ? 'ticker_in_last_10_posts'\n        : null,\n    matchingInstagramPostId: matchingPost?.id ?? null,\n    checkedInstagramPosts: recentPosts.length,\n  },\n}];"
       },
       "id": "3-check-new",
       "name": "Check Trade and Recent Tickers",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
+        720,
         300
       ]
     },
@@ -296,7 +330,7 @@
       "main": [
         [
           {
-            "node": "Check Trade and Recent Tickers",
+            "node": "Get Last 10 Instagram Posts",
             "type": "main",
             "index": 0
           }
@@ -419,6 +453,17 @@
         [
           {
             "node": "Is New Trade?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Last 10 Instagram Posts": {
+      "main": [
+        [
+          {
+            "node": "Check Trade and Recent Tickers",
             "type": "main",
             "index": 0
           }
