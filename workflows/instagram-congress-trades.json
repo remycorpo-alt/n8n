@@ -11,7 +11,10 @@
       "name": "Setup Notes",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-500, -220]
+      "position": [
+        -500,
+        -220
+      ]
     },
     {
       "parameters": {
@@ -28,29 +31,40 @@
       "name": "Every 15 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "GET",
         "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/trades/congress/latest",
-        "options": { "timeout": 10000 }
+        "options": {
+          "timeout": 10000
+        }
       },
       "id": "2-get-trade",
       "name": "Get Latest Congress Trade",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst lastTradeId = staticData.lastTradeId || null;\nconst trade = $input.first().json;\nconst isNew = !lastTradeId || String(trade.id) !== String(lastTradeId);\nreturn [{ json: { ...trade, isNew } }];"
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade = $input.first().json;\n\nconst tradeId = String(trade.id ?? '');\nconst ticker = String(trade.ticker ?? '').trim().toUpperCase();\nconst lastTradeId = staticData.lastTradeId == null\n  ? null\n  : String(staticData.lastTradeId);\n\nconst recentPublishedTickers = Array.isArray(staticData.recentPublishedTickers)\n  ? staticData.recentPublishedTickers\n      .map(value => String(value).trim().toUpperCase())\n      .filter(Boolean)\n      .slice(-10)\n  : [];\n\nconst isNewTrade = !lastTradeId || tradeId !== lastTradeId;\nconst tickerInLast10Posts = Boolean(ticker) && recentPublishedTickers.includes(ticker);\nconst shouldPublish = isNewTrade && !tickerInLast10Posts;\n\n// Mark every new transaction as seen, including one skipped because its\n// ticker appeared in the last 10 successfully published posts.\nif (isNewTrade) {\n  staticData.lastTradeId = tradeId;\n}\n\nreturn [{\n  json: {\n    ...trade,\n    ticker,\n    isNew: shouldPublish,\n    skipReason: !isNewTrade\n      ? 'duplicate_trade_id'\n      : tickerInLast10Posts\n        ? 'ticker_in_last_10_posts'\n        : null,\n    recentPublishedTickers,\n  },\n}];"
       },
       "id": "3-check-new",
-      "name": "Check If New Trade",
+      "name": "Check Trade and Recent Tickers",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [
+        480,
+        300
+      ]
     },
     {
       "parameters": {
@@ -79,17 +93,23 @@
       "name": "Is New Trade?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.1,
-      "position": [720, 300]
+      "position": [
+        720,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Lock this trade ID immediately so concurrent executions skip it.\n// Do NOT move this after the 30s wait — that's what caused double-posts.\nconst staticData = $getWorkflowStaticData('global');\nstaticData.lastTradeId = String($json.id);\nreturn [{ json: $json }];"
+        "jsCode": "// The transaction was marked as seen before the branch.\n// Keep this pass-through node so existing workflow connections remain stable.\nreturn [{ json: $json }];"
       },
       "id": "4b-lock-trade",
       "name": "Lock Trade ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [960, 300]
+      "position": [
+        960,
+        300
+      ]
     },
     {
       "parameters": {
@@ -98,9 +118,18 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "x-api-key",        "value": "={{ $env.ANTHROPIC_API_KEY }}" },
-            { "name": "anthropic-version", "value": "2023-06-01" },
-            { "name": "content-type",      "value": "application/json" }
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -114,17 +143,23 @@
       "name": "Generate Tagline (Claude)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, 180]
+      "position": [
+        960,
+        180
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Merge Claude tagline with original trade data\nconst claudeResp = $input.first().json;\nconst trade      = $('Check If New Trade').first().json;\nconst rawTagline = claudeResp?.content?.[0]?.text?.trim() || 'Trade like an insider.';\n// Strip surrounding quotes if Claude added them\nconst tagline = rawTagline.replace(/^[\"'""'']|[\"'""'']$/g, '').trim();\nreturn [{ json: { ...trade, tagline } }];"
+        "jsCode": "// Merge Claude tagline with original trade data\nconst claudeResp = $input.first().json;\nconst trade      = $('Check Trade and Recent Tickers').first().json;\nconst rawTagline = claudeResp?.content?.[0]?.text?.trim() || 'Trade like an insider.';\n// Strip surrounding quotes if Claude added them\nconst tagline = rawTagline.replace(/^[\"']|[\"']$/g, '').trim();\nreturn [{ json: { ...trade, tagline } }];"
       },
       "id": "6-merge-tagline",
       "name": "Merge Tagline",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 180]
+      "position": [
+        1200,
+        180
+      ]
     },
     {
       "parameters": {
@@ -133,13 +168,18 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, politician: $json.politician, party: $json.party, age: $json.age, job_title: $json.job_title, type: $json.type, amount_min: $json.amount_min, amount_max: $json.amount_max, trade_date: $json.trade_date, filed_date: $json.filed_date, tagline: $json.tagline, id: $json.id }) }}",
-        "options": { "timeout": 90000 }
+        "options": {
+          "timeout": 90000
+        }
       },
       "id": "7-gen-image",
       "name": "Generate Trade Image",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1440, 180],
+      "position": [
+        1440,
+        180
+      ],
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000
@@ -152,7 +192,10 @@
       "name": "Build Caption",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1680, 180]
+      "position": [
+        1680,
+        180
+      ]
     },
     {
       "parameters": {
@@ -161,13 +204,18 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"image_url\": \"{{ $json.imageUrl }}\",\n  \"caption\": {{ JSON.stringify($json.caption) }},\n  \"access_token\": \"{{ $env.IG_ACCESS_TOKEN }}\"\n}",
-        "options": { "timeout": 30000 }
+        "options": {
+          "timeout": 30000
+        }
       },
       "id": "9-ig-create",
       "name": "Create IG Media Container",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1920, 180]
+      "position": [
+        1920,
+        180
+      ]
     },
     {
       "parameters": {
@@ -177,7 +225,10 @@
       "name": "Save Container ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2160, 180]
+      "position": [
+        2160,
+        180
+      ]
     },
     {
       "parameters": {
@@ -189,7 +240,10 @@
       "name": "Wait 30s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [2400, 180],
+      "position": [
+        2400,
+        180
+      ],
       "webhookId": "ig-wait-30s"
     },
     {
@@ -199,67 +253,177 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"creation_id\": \"{{ $json.containerId }}\",\n  \"access_token\": \"{{ $env.IG_ACCESS_TOKEN }}\"\n}",
-        "options": { "timeout": 30000 }
+        "options": {
+          "timeout": 30000
+        }
       },
       "id": "12-ig-publish",
       "name": "Publish to Instagram",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2640, 180]
+      "position": [
+        2640,
+        180
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const trade = $('Save Container ID').first().json;\n// ID was already saved by Lock Trade ID node — this is just the success log.\nreturn [{ json: {\n  success: true,\n  postedTradeId: trade.id,\n  ticker: trade.ticker,\n  politician: trade.politician,\n  trade_date: trade.trade_date,\n  igPostId: $input.first().json.id,\n  postedAt: new Date().toISOString()\n} }];"
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade = $('Save Container ID').first().json;\nconst ticker = String(trade.ticker ?? '').trim().toUpperCase();\n\nconst recentPublishedTickers = Array.isArray(staticData.recentPublishedTickers)\n  ? staticData.recentPublishedTickers\n      .map(value => String(value).trim().toUpperCase())\n      .filter(Boolean)\n      .slice(-9)\n  : [];\n\nif (ticker) {\n  recentPublishedTickers.push(ticker);\n}\n\nstaticData.recentPublishedTickers = recentPublishedTickers.slice(-10);\n\nreturn [{\n  json: {\n    success: true,\n    postedTradeId: trade.id,\n    ticker,\n    politician: trade.politician,\n    trade_date: trade.trade_date,\n    igPostId: $input.first().json.id,\n    postedAt: new Date().toISOString(),\n    recentPublishedTickers: staticData.recentPublishedTickers,\n  },\n}];"
       },
       "id": "13-save-last-id",
-      "name": "Save Last Trade ID",
+      "name": "Record Published Ticker",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2880, 180]
+      "position": [
+        2880,
+        180
+      ]
     }
   ],
   "connections": {
     "Every 15 Minutes": {
-      "main": [[{ "node": "Get Latest Congress Trade", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Get Latest Congress Trade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Get Latest Congress Trade": {
-      "main": [[{ "node": "Check If New Trade", "type": "main", "index": 0 }]]
-    },
-    "Check If New Trade": {
-      "main": [[{ "node": "Is New Trade?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Check Trade and Recent Tickers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Is New Trade?": {
       "main": [
-        [{ "node": "Lock Trade ID", "type": "main", "index": 0 }],
+        [
+          {
+            "node": "Lock Trade ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
         []
       ]
     },
     "Lock Trade ID": {
-      "main": [[{ "node": "Generate Tagline (Claude)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Generate Tagline (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Generate Tagline (Claude)": {
-      "main": [[{ "node": "Merge Tagline", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Merge Tagline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Merge Tagline": {
-      "main": [[{ "node": "Generate Trade Image", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Generate Trade Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Generate Trade Image": {
-      "main": [[{ "node": "Build Caption", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build Caption",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Caption": {
-      "main": [[{ "node": "Create IG Media Container", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Create IG Media Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Create IG Media Container": {
-      "main": [[{ "node": "Save Container ID", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Save Container ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Save Container ID": {
-      "main": [[{ "node": "Wait 30s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Wait 30s": {
-      "main": [[{ "node": "Publish to Instagram", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Publish to Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Publish to Instagram": {
-      "main": [[{ "node": "Save Last Trade ID", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Record Published Ticker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Trade and Recent Tickers": {
+      "main": [
+        [
+          {
+            "node": "Is New Trade?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
