@@ -89,14 +89,22 @@ In your n8n Render service add these env vars:
 
 ---
 
-## Step 5 – Add the API Endpoint to Insider Option
+## Step 5 – The API Endpoints the Workflow Reads
 
-The workflow polls:
-```
-GET /api/trades/congress/latest
-```
+All three are already public on the app; nothing needs deploying.
 
-This endpoint must return a single JSON object (the most recent trade):
+| Endpoint | What it supplies |
+|---|---|
+| `GET /api/trades/congress/latest` | the trade itself |
+| `GET /api/quiver/transactions/stock/:ticker` | the performance figure, matched back by `id` |
+| `GET /api/sp500/historical?months=N` | SPY daily closes for the benchmark |
+
+The performance figure lives in the second call because
+`/api/trades/congress/latest` does not return it. **Pick Trade Row** matches the
+row by `id`; **Compute Benchmark** scores the S&P 500 over the same window and
+routes to *Skip — No Performance* if either number is missing.
+
+`/api/trades/congress/latest` returns a single JSON object (the most recent trade):
 ```json
 {
   "id": "unique-string-or-number",
@@ -112,7 +120,20 @@ This endpoint must return a single JSON object (the most recent trade):
 }
 ```
 
-`id` is the deduplication key – n8n won't re-post the same trade twice.
+`id` is the deduplication key – n8n won't re-post the same trade twice, and it
+is also how the performance row is found.
+
+### Why sales get their sign flipped
+
+`transactions.performance` is not the stock's move when the filing is a sale.
+`server/updatePerformance.ts` computes it as `(txPrice − currentPrice) / txPrice`
+for a sale, so **positive means the stock fell after they sold** — it answers
+"did the filer do well?". The card asks a different question: what did the stock
+do? So **Pick Trade Row** negates it for sales. Remove that and a sale which
+saved the filer 18% posts as a green "+18%".
+
+The row is also skipped unless it has *both* a transaction price and a current
+price, since the figure is computed between those two.
 
 ---
 
@@ -120,23 +141,31 @@ This endpoint must return a single JSON object (the most recent trade):
 
 Test the image generator directly:
 ```bash
-curl -X POST https://your-image-gen.onrender.com/generate \
+# the performance card the workflow posts
+curl -X POST https://your-image-gen.onrender.com/generate-performance \
   -H 'Content-Type: application/json' \
   -d '{
     "ticker": "AAPL",
     "politician": "Nancy Pelosi",
     "party": "Democrat",
-    "type": "Purchase",
+    "type": "achat",
+    "stock_move_pct": 30.0,
+    "benchmark_pct": 8.0,
+    "benchmark_label": "S&P 500",
     "amount_min": 500000,
     "amount_max": 1000000,
-    "trade_date": "2024-01-10",
-    "filed_date": "2024-01-15",
-    "asset_description": "Apple Inc.",
+    "trade_date": "2026-01-15",
+    "filed_date": "2026-02-24",
     "id": "test-1"
   }'
 ```
 
 Returns `{"imageUrl": "https://res.cloudinary.com/..."}`.
+
+`stock_move_pct` and `benchmark_pct` are both required and the route returns 400
+without them — it will not render a bare return with nothing to compare it
+against. `/generate` (the old trade card) and `/generate-story` are untouched and
+still work.
 
 Then in n8n open the workflow and click **Execute Workflow** manually to do a full test run.
 
