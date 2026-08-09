@@ -436,18 +436,30 @@ function drawPerformanceCard(p) {
   ctx.textAlign = 'center';
   ctx.fillText(ticker, cx, 88 + tickerSize * 1.06);
 
-  // Badge — states the action, so a sell is never read as a gain
+  // Badge — the filer's outcome, which is not the same as the stock's direction.
+  //
+  // After a SALE the stock falling IS the good result: they got out before the
+  // drop. Colouring the badge by the stock's direction painted a successful sale
+  // red and read as a loss — wrong, and self-defeating on a card that was chosen
+  // precisely because the trade worked. So the badge states the outcome and takes
+  // its colour from that, while the bars below stay strictly literal about what
+  // the stock and the index did.
   const up = move >= 0;
-  const badgeLabel = `${up ? '▲' : '▼'}  ${formatPct(move)} SINCE ${isBuy ? 'BUY' : 'SELL'}`;
+  const wentTheirWay = isBuy ? move >= 0 : move <= 0;
+  const badgeLabel = isBuy
+    ? `${up ? '▲' : '▼'}  ${formatPct(move)} SINCE BUY`
+    : wentTheirWay
+      ? `▲  ${Math.abs(move).toFixed(1)}% DROP AVOIDED`
+      : `▼  ${formatPct(move)} MISSED AFTER SELLING`;
   ctx.font = `600 26px ${FONT}`;
   const badgeW = ctx.measureText(badgeLabel).width + 52;
   const badgeY = 344;
-  const accent = up ? C.green : PERF_C.red;
+  const accent = wentTheirWay ? C.green : PERF_C.red;
   roundRect(ctx, cx - badgeW / 2, badgeY, badgeW, 48, 8);
   ctx.strokeStyle = accent;
   ctx.lineWidth = 1.5;
   ctx.stroke();
-  ctx.fillStyle = up ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)';
+  ctx.fillStyle = wentTheirWay ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)';
   ctx.fill();
   ctx.fillStyle = accent;
   ctx.textAlign = 'center';
@@ -508,7 +520,16 @@ function drawPerformanceCard(p) {
   ctx.fillStyle = C.dimGreen;
   ctx.textAlign = 'center';
   ctx.letterSpacing = '1px';
-  ctx.fillText('MEASURED FROM THE DISCLOSED TRANSACTION PRICE', cx, stripY + stripH - 22);
+  // The bars are literal, so on a sale the reader needs telling which direction
+  // was the good one — otherwise a red stock bar next to a green badge looks
+  // like a contradiction rather than the point.
+  ctx.fillText(
+    isBuy
+      ? 'MEASURED FROM THE DISCLOSED TRANSACTION PRICE'
+      : 'FROM THE DISCLOSED SALE PRICE · AFTER SELLING, LOWER IS BETTER',
+    cx,
+    stripY + stripH - 22,
+  );
   ctx.letterSpacing = '0px';
 
   // Detail table

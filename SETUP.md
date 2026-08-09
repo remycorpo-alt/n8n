@@ -95,16 +95,45 @@ All three are already public on the app; nothing needs deploying.
 
 | Endpoint | What it supplies |
 |---|---|
-| `GET /api/trades/congress/latest` | the trade itself |
-| `GET /api/quiver/transactions/stock/:ticker` | the performance figure, matched back by `id` |
-| `GET /api/sp500/historical?months=N` | SPY daily closes for the benchmark |
+| `GET /api/quiver/transactions?limit=300` | recent filings, **with** `performance` |
+| `GET /api/sp500/historical?months=18` | SPY daily closes for the benchmark |
+| `GET /api/quiver/politicians` | resolves `politicianId` → name |
 
-The performance figure lives in the second call because
-`/api/trades/congress/latest` does not return it. **Pick Trade Row** matches the
-row by `id`; **Compute Benchmark** scores the S&P 500 over the same window and
-routes to *Skip — No Performance* if either number is missing.
+The first call is already ordered by disclosure date descending and filtered
+server-side to rows that have both a transaction price and a current price —
+which is exactly the set for which `performance` is computed.
 
-`/api/trades/congress/latest` returns a single JSON object (the most recent trade):
+The last two carry `executeOnce`, so they fire once per run rather than once per
+filing in the pool.
+
+## Only trades that worked
+
+**Select Best Winner** publishes a filing only when all of these hold:
+
+| Threshold | Default | Meaning |
+|---|---|---|
+| `MIN_FILER_RESULT_PCT` | 5 | the trade went their way by at least this much |
+| `MIN_EDGE_VS_INDEX_PCT` | 2 | and beat the S&P over the same window |
+| `MAX_FILING_AGE_DAYS` | 90 | and is recent enough to still be news |
+
+Tune them at the top of that node. When nothing clears, the run ends at
+*Skip — Nothing Qualifies* and logs a per-reason breakdown
+(`below_result_floor`, `lost_to_index`, `too_old`, `duplicate`, …).
+
+It reads a **pool** of filings rather than only the newest one, and that is not
+incidental. Filtering a single newest filing cannot work: when that filing is a
+loser there is nothing to fall back to, and `lastTradeId` marks it seen, so the
+account goes dark until a new filing happens to land green.
+
+### A winning sale is a red number
+
+After a sale, the stock **falling** is the good outcome. The bars stay literal —
+CHRW −22%, S&P 500 +5.4% — while the badge states the outcome
+(`▲ 22.0% DROP AVOIDED`, green) and the strip caption says which direction was
+the good one. Colouring the badge by the stock's direction painted a successful
+sale red.
+
+A filing row looks like this:
 ```json
 {
   "id": "unique-string-or-number",
@@ -120,20 +149,30 @@ routes to *Skip — No Performance* if either number is missing.
 }
 ```
 
-`id` is the deduplication key – n8n won't re-post the same trade twice, and it
-is also how the performance row is found.
+Both the `id` and the ticker are remembered in workflow static data after a
+successful post, so a standout filing is not re-picked while it is still inside
+the freshness window.
 
-### Why sales get their sign flipped
+### The one thing not to change: `performance` means two things
 
-`transactions.performance` is not the stock's move when the filing is a sale.
-`server/updatePerformance.ts` computes it as `(txPrice − currentPrice) / txPrice`
-for a sale, so **positive means the stock fell after they sold** — it answers
-"did the filer do well?". The card asks a different question: what did the stock
-do? So **Pick Trade Row** negates it for sales. Remove that and a sale which
-saved the filer 18% posts as a green "+18%".
+`transactions.performance` answers **"did this go the filer's way?"**.
+`server/updatePerformance.ts` computes it as:
 
-The row is also skipped unless it has *both* a transaction price and a current
-price, since the figure is computed between those two.
+```
+buy  → (currentPrice − txPrice) / txPrice     positive = the stock rose after buying
+sell → (txPrice − currentPrice) / txPrice     positive = the stock FELL after selling
+```
+
+So it is the right field for the **filter** in both directions — one
+`performance > 0` test — and the wrong number for the **card**, which shows what
+the stock did and therefore negates sales.
+
+Both halves matter:
+
+- filter on the card's number instead, and you keep exactly the wrong sales —
+  the ones where the stock rose after they got out;
+- print the filter's number instead, and a sale that saved the filer 22% posts
+  as a green "+22%" when the stock in fact fell.
 
 ---
 

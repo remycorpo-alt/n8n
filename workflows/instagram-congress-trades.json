@@ -3,8 +3,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Env vars required in n8n\n\n| Variable | Value |\n|---|---|\n| `INSIDER_OPTION_API_URL` | base URL of your backend |\n| `IMAGE_GENERATOR_URL` | your image-gen Render service URL |\n| `ANTHROPIC_API_KEY` | from console.anthropic.com |\n| `IG_USER_ID` | Instagram Business Account ID |\n| `IG_ACCESS_TOKEN` | long-lived IG access token |\n\n## Endpoints used (all already public)\n\n- `GET /api/trades/congress/latest` — the trade. Carries **no** performance.\n- `GET /api/quiver/transactions/stock/:ticker` — the row that does, matched by `id`.\n- `GET /api/sp500/historical?months=N` — SPY closes for the benchmark.\n- `POST {IMAGE_GENERATOR_URL}/generate-performance`\n\n## Why the sign flip\n\n`transactions.performance` is inverted for sales: positive means the stock *fell*\nafter they sold. **Pick Trade Row** flips it so the card always shows what the\nstock did. Do not remove that.\n\n## No benchmark, no post\n\n**Has Performance?** routes to *Skip — No Performance* when either number is\nmissing. A return with nothing to compare it against is worse than no post.",
-        "height": 620,
+        "content": "## Env vars required in n8n\n\n| Variable | Value |\n|---|---|\n| `INSIDER_OPTION_API_URL` | base URL of your backend |\n| `IMAGE_GENERATOR_URL` | your image-gen Render service URL |\n| `ANTHROPIC_API_KEY` | from console.anthropic.com |\n| `IG_USER_ID` | Instagram Business Account ID |\n| `IG_ACCESS_TOKEN` | long-lived IG access token |\n\n## Endpoints used (all already public)\n\n- `GET /api/quiver/transactions?limit=300` — recent filings **with** performance\n- `GET /api/sp500/historical?months=18` — SPY closes, fetched once for the pool\n- `GET /api/quiver/politicians` — resolves politicianId → name\n- `POST {IMAGE_GENERATOR_URL}/generate-performance`\n\n## Only trades that worked\n\n**Select Best Winner** publishes a filing only when all of these hold:\n\n| Threshold | Default |\n|---|---|\n| `MIN_FILER_RESULT_PCT` | 5 — the trade went their way by at least this |\n| `MIN_EDGE_VS_INDEX_PCT` | 2 — and beat the S&P over the same window |\n| `MAX_FILING_AGE_DAYS` | 90 — and is still recent enough to be news |\n\nTune them at the top of that node. If nothing clears, the run ends at\n*Skip — Nothing Qualifies* and the node logs a per-reason breakdown.\n\nIt reads a **pool** of recent filings, not just the newest one. Filtering the\nsingle newest filing would go dark for days whenever it happened to be a loser.\n\n## Why sales are negated\n\n`transactions.performance` answers \"did this go the filer's way?\" — for a sale\nthat means positive when the stock **fell** after they sold. So the filter uses\nit as-is for both directions, while the card negates sales to show what the\nstock actually did. Do not conflate the two.",
+        "height": 780,
         "width": 440
       },
       "id": "sticky-setup",
@@ -32,26 +32,84 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        0,
+        240,
         300
       ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/trades/congress/latest",
+        "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/quiver/transactions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "300"
+            }
+          ]
+        },
         "options": {
-          "timeout": 10000
+          "timeout": 30000
         }
       },
-      "id": "2-get-trade",
-      "name": "Get Latest Congress Trade",
+      "id": "2-get-recent-filings",
+      "name": "Get Recent Congress Filings",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        240,
+        480,
         300
       ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/sp500/historical",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "months",
+              "value": "18"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "2b-get-sp500",
+      "name": "Get S&P 500 History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        300
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/quiver/politicians",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "2c-get-politicians",
+      "name": "Get Politicians",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        300
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -83,20 +141,23 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
+        1200,
         300
-      ]
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade = $('Get Latest Congress Trade').first().json;\nconst recentResponse = $input.first().json;\n\nconst tradeId = String(trade.id ?? '');\nconst ticker = String(trade.ticker ?? '').trim().toUpperCase();\nconst lastTradeId = staticData.lastTradeId == null\n  ? null\n  : String(staticData.lastTradeId);\n\nconst recentPosts = Array.isArray(recentResponse.data)\n  ? recentResponse.data.slice(0, 10)\n  : [];\n\n// Match the exact cashtag or hashtag, so ticker T does not match TSLA.\nconst escapedTicker = ticker.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\nconst tickerPattern = ticker\n  ? new RegExp(`(?:\\\\$|#)${escapedTicker}(?![A-Z0-9.])`, 'i')\n  : null;\n\nconst matchingPost = tickerPattern\n  ? recentPosts.find(post => tickerPattern.test(String(post.caption ?? '')))\n  : null;\n\nconst isNewTrade = !lastTradeId || tradeId !== lastTradeId;\nconst tickerInLast10Posts = Boolean(matchingPost);\nconst shouldPublish = isNewTrade && !tickerInLast10Posts;\n\n// Mark every new transaction as seen, including one skipped because its\n// ticker appeared in the last 10 Instagram feed posts.\nif (isNewTrade) {\n  staticData.lastTradeId = tradeId;\n}\n\nreturn [{\n  json: {\n    ...trade,\n    ticker,\n    isNew: shouldPublish,\n    skipReason: !isNewTrade\n      ? 'duplicate_trade_id'\n      : tickerInLast10Posts\n        ? 'ticker_in_last_10_posts'\n        : null,\n    matchingInstagramPostId: matchingPost?.id ?? null,\n    checkedInstagramPosts: recentPosts.length,\n  },\n}];"
+        "jsCode": "/* Pick one filing that actually worked, from a pool of recent ones.\n *\n * WHY A POOL. The workflow used to read /api/trades/congress/latest — one\n * filing, the newest. Filtering that to winners does not work: roughly half of\n * filings are losers, and when the newest one is a loser there is nothing else\n * to fall back to, so the account goes dark until a new filing happens to land\n * green. Reading a window of recent filings and choosing within it keeps the\n * cadence while only ever publishing a trade that worked.\n *\n * WHAT \"WORKED\" MEANS. transactions.performance already answers \"did this go the\n * filer's way?\" for both directions — server/updatePerformance.ts computes\n *     buy  → (current - tx) / tx        positive = the stock rose after buying\n *     sell → (tx - current) / tx        positive = the stock FELL after selling\n * so a single `performance > 0` test is the right filter for buys and sales\n * alike. It is NOT the number the card prints: the card shows what the stock\n * did, so sales are negated below. Filtering on the card's number would keep\n * exactly the wrong sales.\n *\n * BEATING THE INDEX IS PART OF IT. A buy up 4% while the S&P rose 12% is not a\n * good trade, and a card showing a green badge above a longer gold bar argues\n * against itself. Both thresholds have to clear.\n */\n\n// ── Tune these ────────────────────────────────────────────────────────────\nconst MIN_FILER_RESULT_PCT = 5;     // the trade must have gone their way by this much\nconst MIN_EDGE_VS_INDEX_PCT = 2;    // ...and beaten the S&P over the same window\nconst MAX_FILING_AGE_DAYS = 90;     // ...and still be recent enough to be news\nconst MAX_ENTRY_DRIFT_DAYS = 10;    // how stale an S&P entry bar may be vs the trade date\n// ──────────────────────────────────────────────────────────────────────────\n\nconst staticData = $getWorkflowStaticData('global');\n\nfunction itemsOf(nodeName) {\n  try {\n    return $(nodeName).all().map(i => i.json).filter(Boolean);\n  } catch (e) {\n    return [];\n  }\n}\n\nconst filings = itemsOf('Get Recent Congress Filings').filter(r => r.id && r.stockTicker);\nconst politicians = itemsOf('Get Politicians');\nconst bars = itemsOf('Get S&P 500 History')\n  .filter(b => b && b.date && Number.isFinite(Number(b.close)))\n  .map(b => ({ date: String(b.date).slice(0, 10), close: Number(b.close) }))\n  .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));\n\nconst politicianById = new Map(politicians.map(p => [String(p.id), p]));\n\n// ── Duplicate suppression ────────────────────────────────────────────────\n// Filtering to winners shrinks the pool, which makes repetition MORE likely,\n// so this is now load-bearing rather than a nicety. The Instagram response is\n// treated as untrustworthy: if it is not the shape we expect we fall back to\n// our own record and say so, instead of silently letting duplicates through.\nconst igResponse = itemsOf('Get Last 10 Instagram Posts')[0] || {};\nconst igOk = Array.isArray(igResponse.data);\nconst recentCaptions = igOk\n  ? igResponse.data.slice(0, 10).map(p => String(p.caption ?? ''))\n  : [];\nif (!igOk) {\n  console.warn(\n    'Instagram feed unreadable — falling back to the local published-ticker record only. ' +\n    'Duplicate suppression is degraded this run.',\n  );\n}\n\nconst publishedTickers = new Set(\n  (Array.isArray(staticData.recentPublishedTickers) ? staticData.recentPublishedTickers : [])\n    .map(t => String(t).trim().toUpperCase())\n    .filter(Boolean),\n);\nconst publishedIds = new Set(\n  (Array.isArray(staticData.publishedTradeIds) ? staticData.publishedTradeIds : []).map(String),\n);\n\n// Match the exact cashtag or hashtag, so ticker T does not match TSLA.\nfunction inRecentCaptions(ticker) {\n  if (!ticker || !recentCaptions.length) return false;\n  const escaped = ticker.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n  const pattern = new RegExp(`(?:\\\\$|#)${escaped}(?![A-Z0-9.])`, 'i');\n  return recentCaptions.some(c => pattern.test(c));\n}\n\n// ── Helpers ──────────────────────────────────────────────────────────────\nconst DAY = 86400000;\nconst today = new Date().toISOString().slice(0, 10);\nconst lastBar = bars.length ? bars[bars.length - 1] : null;\n\nfunction benchmarkSince(tradeDate) {\n  if (!lastBar || !tradeDate) return null;\n  const first = bars.find(b => b.date >= tradeDate);\n  if (!first || first.close <= 0) return null;\n  // The entry bar must be near the trade date. If the S&P history starts later\n  // than the trade, the index gets scored over a shorter window than the stock,\n  // which quietly flatters the trade.\n  if (Math.round((new Date(first.date) - new Date(tradeDate)) / DAY) > MAX_ENTRY_DRIFT_DAYS) return null;\n  if (lastBar.date <= first.date) return null;\n  return ((lastBar.close - first.close) / first.close) * 100;\n}\n\n// The API hands back the raw disclosure string; the range parsing used to live\n// in /api/trades/congress/latest, which this no longer calls.\nfunction parseAmountRange(raw) {\n  const s = String(raw ?? '');\n  const clean = v => parseInt(v.replace(/[$,]/g, ''), 10);\n  const range = s.match(/\\$[\\d,]+\\s*-\\s*\\$[\\d,]+/);\n  if (range) {\n    const parts = range[0].split('-').map(x => x.trim());\n    return { min: clean(parts[0]), max: clean(parts[1]) };\n  }\n  const single = s.match(/>\\s*\\$[\\d,]+/);\n  if (single) return { min: clean(single[0].replace('>', '').trim()), max: null };\n  return { min: null, max: null };\n}\n\n// The DB stores parties in French; the feed is in English.\nfunction party(raw) {\n  const s = String(raw ?? '');\n  if (/d[ée]mocrat/i.test(s)) return 'Democrat';\n  if (/r[ée]publicain|republican/i.test(s)) return 'Republican';\n  return s || null;\n}\n\nconst numeric = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));\n\n// ── Score every candidate ────────────────────────────────────────────────\nconst rejected = { no_performance: 0, no_benchmark: 0, below_result_floor: 0, lost_to_index: 0, too_old: 0, duplicate: 0 };\nconst eligible = [];\n\nfor (const r of filings) {\n  const ticker = String(r.stockTicker).trim().toUpperCase();\n  const tradeDate = r.date ? String(r.date).slice(0, 10) : null;\n  const filedDate = r.reportDate ? String(r.reportDate).slice(0, 10) : tradeDate;\n  const isBuy = /purchase|buy|achat/i.test(String(r.action ?? ''));\n\n  if (!numeric(r.performance) || !numeric(r.transactionPrice) || !numeric(r.currentPrice)) {\n    rejected.no_performance++;\n    continue;\n  }\n  const filerResult = Number(r.performance);\n\n  const ageDays = filedDate ? Math.round((new Date(today) - new Date(filedDate)) / DAY) : null;\n  if (ageDays === null || ageDays > MAX_FILING_AGE_DAYS) { rejected.too_old++; continue; }\n\n  // Covers both a trade that went against them and one that went their way by\n  // too little to be worth a post.\n  if (filerResult < MIN_FILER_RESULT_PCT) { rejected.below_result_floor++; continue; }\n\n  const benchmark = benchmarkSince(tradeDate);\n  if (!numeric(benchmark)) { rejected.no_benchmark++; continue; }\n\n  const stockMove = isBuy ? filerResult : -filerResult;\n  // A sale's edge is what they avoided: the index rose while the stock fell.\n  const edge = isBuy ? stockMove - benchmark : benchmark - stockMove;\n  if (edge < MIN_EDGE_VS_INDEX_PCT) { rejected.lost_to_index++; continue; }\n\n  if (publishedIds.has(String(r.id)) || publishedTickers.has(ticker) || inRecentCaptions(ticker)) {\n    rejected.duplicate++;\n    continue;\n  }\n\n  const p = r.politicianId ? politicianById.get(String(r.politicianId)) : null;\n  const { min, max } = parseAmountRange(r.amount);\n\n  eligible.push({\n    id: r.id,\n    ticker,\n    politician: p?.name ?? null,\n    party: party(p?.party),\n    type: r.action,\n    is_buy: isBuy,\n    amount_min: min,\n    amount_max: max,\n    trade_date: tradeDate,\n    filed_date: filedDate,\n    stock_move_pct: Number(stockMove.toFixed(2)),\n    benchmark_pct: Number(benchmark.toFixed(2)),\n    benchmark_label: 'S&P 500',\n    filer_result_pct: Number(filerResult.toFixed(2)),\n    filer_edge_pct: Number(edge.toFixed(2)),\n    lag_days: tradeDate && filedDate ? Math.round((new Date(filedDate) - new Date(tradeDate)) / DAY) : null,\n    filing_age_days: ageDays,\n  });\n}\n\n// Freshest first, biggest edge as the tie-break. Ranking by edge alone would\n// park the account on one monster trade and re-post it as soon as it aged out\n// of the duplicate window.\neligible.sort((a, b) =>\n  a.filed_date === b.filed_date\n    ? b.filer_edge_pct - a.filer_edge_pct\n    : (a.filed_date < b.filed_date ? 1 : -1),\n);\n\nconst pick = eligible[0] || null;\n\nif (!pick) {\n  const summary = Object.entries(rejected).filter(([, v]) => v > 0).map(([k, v]) => `${k}=${v}`).join(' ');\n  console.log(\n    `Nothing qualifies from ${filings.length} filings (${summary || 'pool empty'}). ` +\n    'No post — silence beats manufacturing a story.',\n  );\n  return [{\n    json: {\n      isNew: false,\n      skipReason: 'no_qualifying_trade',\n      candidatesConsidered: filings.length,\n      rejected,\n      instagramFeedReadable: igOk,\n    },\n  }];\n}\n\nconsole.log(\n  `Selected ${pick.ticker} (${pick.is_buy ? 'buy' : 'sale'}) — filer +${pick.filer_result_pct}%, ` +\n  `edge +${pick.filer_edge_pct}% vs S&P, filed ${pick.filing_age_days}d ago. ` +\n  `${eligible.length} of ${filings.length} filings qualified.`,\n);\n\nreturn [{\n  json: {\n    ...pick,\n    isNew: true,\n    skipReason: null,\n    candidatesConsidered: filings.length,\n    qualified: eligible.length,\n    rejected,\n    instagramFeedReadable: igOk,\n  },\n}];\n"
       },
-      "id": "3-check-new",
-      "name": "Check Trade and Recent Tickers",
+      "id": "3-select-best-winner",
+      "name": "Select Best Winner",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        720,
+        1440,
         300
       ]
     },
@@ -128,7 +189,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.1,
       "position": [
-        720,
+        1680,
         300
       ]
     },
@@ -141,8 +202,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        960,
-        300
+        1920,
+        180
       ]
     },
     {
@@ -178,139 +239,22 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        960,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Merge Claude tagline with original trade data\nconst claudeResp = $input.first().json;\nconst trade      = $('Check Trade and Recent Tickers').first().json;\nconst rawTagline = claudeResp?.content?.[0]?.text?.trim() || 'Trade like an insider.';\n// Strip surrounding quotes if Claude added them\nconst tagline = rawTagline.replace(/^[\"']|[\"']$/g, '').trim();\nreturn [{ json: { ...trade, tagline } }];"
-      },
-      "id": "6-merge-tagline",
-      "name": "Merge Tagline",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1200,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/quiver/transactions/stock/{{ encodeURIComponent($json.ticker) }}",
-        "options": {
-          "timeout": 15000
-        }
-      },
-      "id": "8a-get-performance",
-      "name": "Get Trade Performance",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1440,
-        180
-      ],
-      "alwaysOutputData": true,
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Turn the DB row into ONE signed number the card can render.\n//\n// `transactions.performance` is NOT the stock's move when the filing is a sale.\n// server/updatePerformance.ts computes:\n//     buy  → (current - tx) / tx * 100\n//     sell → (tx - current) / tx * 100     ← inverted: positive means the stock FELL\n// It answers \"did the filer do well?\", which is the right column for the site's\n// tables but the wrong number to print on a card. The card shows what the STOCK\n// did since the disclosed transaction, so sales are sign-flipped. Without this a\n// sale that saved the filer 18% renders as \"+18%\" and reads as a gain.\n//\n// /api/trades/congress/latest carries no performance at all, which is why the row\n// has to be re-fetched from /api/quiver/transactions/stock/:ticker and matched by id.\n\nconst trade = $('Merge Tagline').first().json;\n\nlet rows = [];\ntry {\n  rows = $input.all().map(i => i.json).filter(r => r && r.id);\n} catch (e) {\n  rows = [];\n}\n\nconst row = rows.find(r => String(r.id) === String(trade.id)) || null;\n\nconst num = v => {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n};\n\nconst rawPerf = row ? num(row.performance) : null;\nconst txPrice = row ? num(row.transactionPrice ?? row.transaction_price) : null;\nconst nowPrice = row ? num(row.currentPrice ?? row.current_price) : null;\n\n// \"vente\" is what the DB stores for a sale; the API passes `action` straight\n// through as `type`, so both the French and the English spellings can arrive.\nconst isBuy = /purchase|buy|achat/i.test(String(trade.type ?? row?.action ?? ''));\n\n// performance is only meaningful when both prices exist — that is what it is\n// computed between. A row missing either was skipped by the updater.\nconst stock_move_pct =\n  rawPerf === null || txPrice === null || nowPrice === null\n    ? null\n    : (isBuy ? rawPerf : -rawPerf);\n\nreturn [{\n  json: {\n    ...trade,\n    is_buy: isBuy,\n    stock_move_pct,\n    transaction_price: txPrice,\n    current_price: nowPrice,\n    performance_source: row ? 'matched' : 'no-matching-row',\n  },\n}];\n"
-      },
-      "id": "8b-pick-trade-row",
-      "name": "Pick Trade Row",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1680,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "={{ $env.INSIDER_OPTION_API_URL }}/api/sp500/historical",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "months",
-              "value": "={{ Math.min(120, Math.max(2, Math.ceil((Date.now() - new Date($json.trade_date).getTime()) / 2592000000) + 1)) }}"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 20000
-        }
-      },
-      "id": "8c-get-benchmark",
-      "name": "Get S&P 500 Window",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1920,
-        180
-      ],
-      "alwaysOutputData": true,
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Benchmark the same window against the S&P 500.\n//\n// No benchmark, no post. A return with nothing to compare it against is the\n// single most misleading thing this workflow could publish — a +12% card during\n// a +14% market is a losing trade dressed as a win. /api/sp500/historical returns\n// [] rather than throwing when Alpaca is unreachable, so an empty array here is\n// an ordinary outcome and has to be handled, not assumed away.\n\nconst trade = $('Pick Trade Row').first().json;\n\nlet bars = [];\ntry {\n  bars = $input.all()\n    .map(i => i.json)\n    .filter(b => b && b.date && Number.isFinite(Number(b.close)))\n    .map(b => ({ date: String(b.date).slice(0, 10), close: Number(b.close) }))\n    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));\n} catch (e) {\n  bars = [];\n}\n\nconst tradeDate = String(trade.trade_date ?? '').slice(0, 10);\nconst exit = bars.length ? bars[bars.length - 1] : null;\n\n// The entry bar has to be *near* the trade date, not merely on-or-after it. If\n// Alpaca's window starts later than the trade (short history, a `months` cap, a\n// truncated response) the first bar returned can be months late, and the index\n// would then be scored over a shorter window than the stock — which quietly\n// flatters or damns the trade. Ten days covers a holiday plus a long weekend.\nconst MAX_ENTRY_DRIFT_DAYS = 10;\nconst firstOnOrAfter = tradeDate ? bars.find(b => b.date >= tradeDate) : null;\nconst driftDays = firstOnOrAfter\n  ? Math.round((new Date(firstOnOrAfter.date) - new Date(tradeDate)) / 86400000)\n  : null;\nconst entry = driftDays !== null && driftDays <= MAX_ENTRY_DRIFT_DAYS ? firstOnOrAfter : null;\n\nlet benchmark_pct = null;\nif (entry && exit && entry.close > 0 && exit.date > entry.date) {\n  benchmark_pct = ((exit.close - entry.close) / entry.close) * 100;\n}\n\nconst lag_days =\n  trade.trade_date && trade.filed_date\n    ? Math.round((new Date(trade.filed_date) - new Date(trade.trade_date)) / 86400000)\n    : null;\n\n// Number(null) is 0, and 0 is finite — so a bare Number.isFinite() check would\n// wave a missing figure through as a flat 0.0% and post it. Reject the empty\n// cases explicitly before coercing.\nconst numeric = v =>\n  v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));\n\nconst hasMove = numeric(trade.stock_move_pct);\nconst hasBench = numeric(benchmark_pct);\nconst hasBoth = hasMove && hasBench;\n\nconst skip_reason = hasBoth\n  ? null\n  : !hasMove\n    ? `no performance for trade ${trade.id} (${trade.performance_source})`\n    : entry === null && firstOnOrAfter\n      ? `S&P 500 history starts ${driftDays} days after the ${tradeDate} trade — window would not match`\n      : `no S&P 500 window for ${tradeDate || 'unknown trade date'} (${bars.length} bars)`;\n\nif (skip_reason) {\n  console.log(`Skipping post: ${skip_reason}`);\n}\n\nreturn [{\n  json: {\n    ...trade,\n    benchmark_pct,\n    benchmark_label: 'S&P 500',\n    benchmark_entry: entry ? entry.close : null,\n    benchmark_exit: exit ? exit.close : null,\n    lag_days,\n    can_post: hasBoth,\n    skip_reason,\n  },\n}];\n"
-      },
-      "id": "8d-compute-benchmark",
-      "name": "Compute Benchmark",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
         2160,
         180
       ]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "cond-can-post",
-              "leftValue": "={{ $json.can_post }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+        "jsCode": "// Merge Claude tagline with original trade data\nconst claudeResp = $input.first().json;\nconst trade      = $('Select Best Winner').first().json;\nconst rawTagline = claudeResp?.content?.[0]?.text?.trim() || 'Trade like an insider.';\n// Strip surrounding quotes if Claude added them\nconst tagline = rawTagline.replace(/^[\"']|[\"']$/g, '').trim();\nreturn [{ json: { ...trade, tagline } }];"
       },
-      "id": "8e-has-performance",
-      "name": "Has Performance?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.1,
+      "id": "6-merge-tagline",
+      "name": "Merge Tagline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         2400,
         180
       ]
-    },
-    {
-      "parameters": {},
-      "id": "8f-skip-no-performance",
-      "name": "Skip — No Performance",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
-        2640,
-        400
-      ],
-      "notes": "Ends the run silently. Read skip_reason on the incoming item."
     },
     {
       "parameters": {
@@ -318,7 +262,7 @@
         "url": "={{ $env.IMAGE_GENERATOR_URL }}/generate-performance",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, politician: $json.politician, party: $json.party, type: $json.type, stock_move_pct: $json.stock_move_pct, benchmark_pct: $json.benchmark_pct, benchmark_label: $json.benchmark_label, amount_min: $json.amount_min, amount_max: $json.amount_max, trade_date: $json.trade_date, filed_date: $json.filed_date, tagline: $json.tagline, id: $json.id }) }}",
+        "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, politician: $json.politician, party: $json.party, type: $json.type, stock_move_pct: $json.stock_move_pct, benchmark_pct: $json.benchmark_pct, benchmark_label: $json.benchmark_label, filer_result_pct: $json.filer_result_pct, filer_edge_pct: $json.filer_edge_pct, amount_min: $json.amount_min, amount_max: $json.amount_max, trade_date: $json.trade_date, filed_date: $json.filed_date, tagline: $json.tagline, id: $json.id }) }}",
         "options": {
           "timeout": 90000
         }
@@ -328,7 +272,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2400,
+        2640,
         180
       ],
       "retryOnFail": true,
@@ -337,14 +281,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build the Instagram caption and carry imageUrl forward.\nconst imageData = $input.first().json;\nconst trade = $('Compute Benchmark').first().json;\n\nfunction fmt(n) {\n  return n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}K`;\n}\nfunction amount(min, max) {\n  if (!min && !max) return 'Undisclosed';\n  if (!max) return `${fmt(min)}+`;\n  return `${fmt(min)} – ${fmt(max)}`;\n}\nfunction pct(n) {\n  const v = Number(n);\n  return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;\n}\n\nconst ticker = trade.ticker || '';\nconst isBuy = trade.is_buy === true;\nconst move = Number(trade.stock_move_pct);\nconst bench = Number(trade.benchmark_pct);\nconst lag = trade.lag_days;\n\nconst headline = isBuy\n  ? `$${ticker} is ${pct(move)} since the buy`\n  : `$${ticker} is ${pct(move)} since the sale`;\n\n// The one sentence that must survive any edit to this template. `performance` is\n// measured from the disclosed transaction price — it is the filer's window, not a\n// follower's, because the filing only became public weeks later. Drop it and a\n// data post becomes a performance claim the number does not support.\nconst basis = isBuy\n  ? `Measured from the price at the disclosed transaction to the latest price we hold. That is the filer's result, not a follower's${lag !== null ? ` — the filing became public ${lag} days after the trade` : ''}.`\n  : `Measured from the price at the disclosed sale to the latest price we hold — what the stock did after they got out${lag !== null ? `, disclosed ${lag} days later` : ''}.`;\n\nconst beat = move - bench;\nconst versus = `${ticker} ${pct(move)} vs ${trade.benchmark_label || 'S&P 500'} ${pct(bench)} over the same window (${pct(beat)} difference).`;\n\nconst caption = [\n  `${isBuy ? '🟢' : '🔴'} ${headline}`,\n  ``,\n  `${trade.politician}${trade.party ? ` (${trade.party})` : ''} disclosed a ${isBuy ? 'purchase' : 'sale'} of $${ticker} worth ${amount(trade.amount_min, trade.amount_max)}.`,\n  ``,\n  `📊 ${versus}`,\n  `📅 Traded: ${trade.trade_date || 'Unknown'}`,\n  `📋 Disclosed: ${trade.filed_date || 'Unknown'}`,\n  ``,\n  basis,\n  ``,\n  trade.tagline,\n  ``,\n  `Every Congress filing, tracked and benchmarked: insideroption.com`,\n  ``,\n  `#CongressTrades #StockMarket #${ticker} #Investing #InsiderOption #SP500 #StockAct #WallStreet`,\n].join('\\n');\n\nreturn [{ json: { ...trade, imageUrl: imageData.imageUrl, caption } }];\n"
+        "jsCode": "// Build the Instagram caption and carry imageUrl forward.\nconst imageData = $input.first().json;\nconst trade = $('Merge Tagline').first().json;\n\nfunction fmt(n) {\n  return n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}K`;\n}\nfunction amount(min, max) {\n  if (!min && !max) return 'Undisclosed';\n  if (!max) return `${fmt(min)}+`;\n  return `${fmt(min)} – ${fmt(max)}`;\n}\nfunction pct(n) {\n  const v = Number(n);\n  return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;\n}\n\nconst ticker = trade.ticker || '';\nconst isBuy = trade.is_buy === true;\nconst move = Number(trade.stock_move_pct);\nconst bench = Number(trade.benchmark_pct);\nconst lag = trade.lag_days;\n\nconst headline = isBuy\n  ? `$${ticker} is ${pct(move)} since the buy`\n  : `$${ticker} is ${pct(move)} since the sale`;\n\n// The one sentence that must survive any edit to this template. `performance` is\n// measured from the disclosed transaction price — it is the filer's window, not a\n// follower's, because the filing only became public weeks later. Drop it and a\n// data post becomes a performance claim the number does not support.\nconst basis = isBuy\n  ? `Measured from the price at the disclosed transaction to the latest price we hold. That is the filer's result, not a follower's${lag !== null ? ` — the filing became public ${lag} days after the trade` : ''}.`\n  : `Measured from the price at the disclosed sale to the latest price we hold — what the stock did after they got out${lag !== null ? `, disclosed ${lag} days later` : ''}.`;\n\n// filer_edge_pct is signed for the direction of the trade: for a sale the\n// advantage is the index rising while the stock fell, so it is bench − move,\n// not move − bench. Printing the raw difference showed a good sale as negative.\nconst edge = Number(trade.filer_edge_pct);\nconst versus = `${ticker} ${pct(move)} vs ${trade.benchmark_label || 'S&P 500'} ${pct(bench)} over the same window — ${pct(edge)} ${isBuy ? 'ahead of the index' : 'avoided versus staying in'}.`;\n\nconst caption = [\n  `${isBuy ? '🟢' : '🔴'} ${headline}`,\n  ``,\n  `${trade.politician}${trade.party ? ` (${trade.party})` : ''} disclosed a ${isBuy ? 'purchase' : 'sale'} of $${ticker} worth ${amount(trade.amount_min, trade.amount_max)}.`,\n  ``,\n  `📊 ${versus}`,\n  `📅 Traded: ${trade.trade_date || 'Unknown'}`,\n  `📋 Disclosed: ${trade.filed_date || 'Unknown'}`,\n  ``,\n  basis,\n  ``,\n  trade.tagline,\n  ``,\n  `Every Congress filing, tracked and benchmarked: insideroption.com`,\n  ``,\n  `#CongressTrades #StockMarket #${ticker} #Investing #InsiderOption #SP500 #StockAct #WallStreet`,\n].join('\\n');\n\nreturn [{ json: { ...trade, imageUrl: imageData.imageUrl, caption } }];\n"
       },
       "id": "8-build-caption",
       "name": "Build Caption",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2640,
+        2880,
         180
       ]
     },
@@ -364,7 +308,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2880,
+        3120,
         180
       ]
     },
@@ -377,7 +321,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3120,
+        3360,
         180
       ]
     },
@@ -392,7 +336,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        3360,
+        3600,
         180
       ],
       "webhookId": "ig-wait-30s"
@@ -413,22 +357,34 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3600,
+        3840,
         180
       ]
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade = $('Save Container ID').first().json;\nconst ticker = String(trade.ticker ?? '').trim().toUpperCase();\n\nconst recentPublishedTickers = Array.isArray(staticData.recentPublishedTickers)\n  ? staticData.recentPublishedTickers\n      .map(value => String(value).trim().toUpperCase())\n      .filter(Boolean)\n      .slice(-9)\n  : [];\n\nif (ticker) {\n  recentPublishedTickers.push(ticker);\n}\n\nstaticData.recentPublishedTickers = recentPublishedTickers.slice(-10);\n\nreturn [{\n  json: {\n    success: true,\n    postedTradeId: trade.id,\n    ticker,\n    politician: trade.politician,\n    trade_date: trade.trade_date,\n    igPostId: $input.first().json.id,\n    postedAt: new Date().toISOString(),\n    recentPublishedTickers: staticData.recentPublishedTickers,\n  },\n}];"
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst trade = $('Save Container ID').first().json;\nconst ticker = String(trade.ticker ?? '').trim().toUpperCase();\n\nconst recentPublishedTickers = Array.isArray(staticData.recentPublishedTickers)\n  ? staticData.recentPublishedTickers\n      .map(value => String(value).trim().toUpperCase())\n      .filter(Boolean)\n      .slice(-9)\n  : [];\n\nif (ticker) {\n  recentPublishedTickers.push(ticker);\n}\n\nstaticData.recentPublishedTickers = recentPublishedTickers.slice(-10);\n\n// Also remember the exact trade ids. Selecting the best winner from a pool means\n// the same standout filing stays eligible for as long as it is inside the\n// freshness window, so a ticker-only memory would re-post it once it fell out of\n// the last-10 captions.\nconst publishedTradeIds = (Array.isArray(staticData.publishedTradeIds) ? staticData.publishedTradeIds : [])\n  .map(String)\n  .filter(Boolean);\nif (trade.id) publishedTradeIds.push(String(trade.id));\nstaticData.publishedTradeIds = publishedTradeIds.slice(-200);\n\nreturn [{\n  json: {\n    success: true,\n    postedTradeId: trade.id,\n    ticker,\n    politician: trade.politician,\n    trade_date: trade.trade_date,\n    igPostId: $input.first().json.id,\n    postedAt: new Date().toISOString(),\n    recentPublishedTickers: staticData.recentPublishedTickers,\n  },\n}];"
       },
       "id": "13-save-last-id",
       "name": "Record Published Ticker",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3840,
+        4080,
         180
       ]
+    },
+    {
+      "parameters": {},
+      "id": "8f-skip-no-performance",
+      "name": "Skip — Nothing Qualifies",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        460
+      ],
+      "notes": "Ends the run silently. Read skipReason / rejected on the incoming item."
     }
   ],
   "connections": {
@@ -436,18 +392,62 @@
       "main": [
         [
           {
-            "node": "Get Latest Congress Trade",
+            "node": "Get Recent Congress Filings",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Latest Congress Trade": {
+    "Get Recent Congress Filings": {
+      "main": [
+        [
+          {
+            "node": "Get S&P 500 History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get S&P 500 History": {
+      "main": [
+        [
+          {
+            "node": "Get Politicians",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Politicians": {
       "main": [
         [
           {
             "node": "Get Last 10 Instagram Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Last 10 Instagram Posts": {
+      "main": [
+        [
+          {
+            "node": "Select Best Winner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Best Winner": {
+      "main": [
+        [
+          {
+            "node": "Is New Trade?",
             "type": "main",
             "index": 0
           }
@@ -463,7 +463,13 @@
             "index": 0
           }
         ],
-        []
+        [
+          {
+            "node": "Skip — Nothing Qualifies",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Lock Trade ID": {
@@ -492,7 +498,18 @@
       "main": [
         [
           {
-            "node": "Get Trade Performance",
+            "node": "Generate Performance Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Performance Image": {
+      "main": [
+        [
+          {
+            "node": "Build Caption",
             "type": "main",
             "index": 0
           }
@@ -548,101 +565,6 @@
         [
           {
             "node": "Record Published Ticker",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check Trade and Recent Tickers": {
-      "main": [
-        [
-          {
-            "node": "Is New Trade?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Last 10 Instagram Posts": {
-      "main": [
-        [
-          {
-            "node": "Check Trade and Recent Tickers",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Trade Performance": {
-      "main": [
-        [
-          {
-            "node": "Pick Trade Row",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Pick Trade Row": {
-      "main": [
-        [
-          {
-            "node": "Get S&P 500 Window",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get S&P 500 Window": {
-      "main": [
-        [
-          {
-            "node": "Compute Benchmark",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Compute Benchmark": {
-      "main": [
-        [
-          {
-            "node": "Has Performance?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Performance?": {
-      "main": [
-        [
-          {
-            "node": "Generate Performance Image",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Skip — No Performance",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generate Performance Image": {
-      "main": [
-        [
-          {
-            "node": "Build Caption",
             "type": "main",
             "index": 0
           }
