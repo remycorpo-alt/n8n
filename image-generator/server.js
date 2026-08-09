@@ -381,16 +381,25 @@ function formatPct(n) {
 /*
  * Performance card, same visual language as drawTradeCard.
  *
- * `stock_move_pct` is the SIGNED move of the stock since the disclosed transaction
- * price — not the DB `performance` column, which is inverted for sells. The n8n
- * workflow sign-corrects before calling this. One consistent number in both cases:
+ * `performance_pct` is the SAME number the website shows for that trade — the
+ * stored `transactions.performance` column, which answers "did this go the
+ * filer's way?":
  *
- *   buy  → what the position gained/lost since they bought
- *   sell → what the stock did after they sold
+ *   buy  → (current - tx) / tx     positive = the position is up
+ *   sell → (tx - current) / tx     positive = the stock FELL after they sold
+ *
+ * Keeping the card on the site's column matters more than internal tidiness: a
+ * post that says -22% for a trade the site's own table shows as +22% reads as a
+ * bug to anyone who clicks through. An earlier version of this card negated
+ * sales to show the stock's raw direction, and that is exactly the mismatch it
+ * produced.
+ *
+ * The cost is that a sale's positive number is easy to misread as "the stock went
+ * up", so the badge and the strip caption both say what it is in words. Do not
+ * reduce them to a bare percentage.
  *
  * It is the filer's window, NOT a follower's: the filing became public up to 45
- * days later. That is why the strip is captioned with the price basis and the lag
- * is its own table row. Do not relabel those to imply a follower's return.
+ * days later. That is why the lag is its own table row.
  */
 function drawPerformanceCard(p) {
   const W = 1080, H = 1080;
@@ -402,10 +411,10 @@ function drawPerformanceCard(p) {
   // is finite — so a bare Number.isFinite() guard lets a missing figure through
   // and renders it as a confident "+0.0%". Reject the empty cases first.
   const numeric = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
-  if (!numeric(p.stock_move_pct)) throw new Error('stock_move_pct is required and must be numeric');
+  if (!numeric(p.performance_pct)) throw new Error('performance_pct is required and must be numeric');
   if (!numeric(p.benchmark_pct)) throw new Error('benchmark_pct is required — a return with no benchmark is not a measurement');
 
-  const move  = Number(p.stock_move_pct);
+  const perf  = Number(p.performance_pct);
   const bench = Number(p.benchmark_pct);
 
   const isBuy = /purchase|buy|achat/i.test(p.type || '');
@@ -444,13 +453,15 @@ function drawPerformanceCard(p) {
   // precisely because the trade worked. So the badge states the outcome and takes
   // its colour from that, while the bars below stay strictly literal about what
   // the stock and the index did.
-  const up = move >= 0;
-  const wentTheirWay = isBuy ? move >= 0 : move <= 0;
+  // The column is already signed so that positive = it went their way, in both
+  // directions. The wording is what disambiguates a sale.
+  const up = perf >= 0;
+  const wentTheirWay = up;
   const badgeLabel = isBuy
-    ? `${up ? '▲' : '▼'}  ${formatPct(move)} SINCE BUY`
-    : wentTheirWay
-      ? `▲  ${Math.abs(move).toFixed(1)}% DROP AVOIDED`
-      : `▼  ${formatPct(move)} MISSED AFTER SELLING`;
+    ? `${up ? '▲' : '▼'}  ${formatPct(perf)} SINCE BUY`
+    : up
+      ? `▲  ${formatPct(perf)} DROP AVOIDED`
+      : `▼  ${formatPct(Math.abs(perf))} MISSED AFTER SELLING`;
   ctx.font = `600 26px ${FONT}`;
   const badgeW = ctx.measureText(badgeLabel).width + 52;
   const badgeY = 344;
@@ -467,7 +478,7 @@ function drawPerformanceCard(p) {
 
   // Two bars: the stock and the index over the same window
   const bars = [
-    { label: ticker, value: move, color: up ? C.green : PERF_C.red },
+    { label: ticker, value: perf, color: up ? C.green : PERF_C.red },
     { label: (p.benchmark_label || 'S&P 500').toUpperCase(), value: bench, color: PERF_C.gold },
   ];
 
@@ -526,7 +537,7 @@ function drawPerformanceCard(p) {
   ctx.fillText(
     isBuy
       ? 'MEASURED FROM THE DISCLOSED TRANSACTION PRICE'
-      : 'FROM THE DISCLOSED SALE PRICE · AFTER SELLING, LOWER IS BETTER',
+      : 'THE DROP AVOIDED SINCE THE DISCLOSED SALE PRICE',
     cx,
     stripY + stripH - 22,
   );

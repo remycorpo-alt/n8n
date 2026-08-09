@@ -153,7 +153,7 @@ Both the `id` and the ticker are remembered in workflow static data after a
 successful post, so a standout filing is not re-picked while it is still inside
 the freshness window.
 
-### The one thing not to change: `performance` means two things
+### `performance` is the site's own column, and the card passes it through
 
 `transactions.performance` answers **"did this go the filer's way?"**.
 `server/updatePerformance.ts` computes it as:
@@ -163,16 +163,29 @@ buy  → (currentPrice − txPrice) / txPrice     positive = the stock rose afte
 sell → (txPrice − currentPrice) / txPrice     positive = the stock FELL after selling
 ```
 
-So it is the right field for the **filter** in both directions — one
-`performance > 0` test — and the wrong number for the **card**, which shows what
-the stock did and therefore negates sales.
+This is the same column the website renders per trade — `calculatePerformance`
+in `client/src/pages/strategy-detail.tsx` and `getTransactionPerformance` in
+`client/src/pages/politician-profile.tsx` both display it verbatim. So the card
+posts it **unchanged**, as `performance_pct`. A post reading −22% for a trade the
+site's own table shows as +22% reads as a bug to anyone who clicks through.
 
-Both halves matter:
+The catch is that a sale's positive number looks like the stock went up, when it
+means the opposite. The card never prints it bare:
 
-- filter on the card's number instead, and you keep exactly the wrong sales —
-  the ones where the stock rose after they got out;
-- print the filter's number instead, and a sale that saved the filer 22% posts
-  as a green "+22%" when the stock in fact fell.
+- badge → `▲ +22.0% DROP AVOIDED`
+- strip caption → `THE DROP AVOIDED SINCE THE DISCLOSED SALE PRICE`
+- caption → *"CHRW fell 22.0% while the S&P 500 rose +5.4% — +27.4% avoided by
+  getting out."*
+
+Keep that wording. Reducing any of it to a percentage is what makes the number
+misleading.
+
+> **Heads up on the site itself:** `strategy-detail.tsx` computes `isSell` and
+> then never uses it, so a sale displays as a bare green `+22.00%` in the same
+> style as a profitable buy. Its own fallback branch (used when `performance` is
+> not stored) computes `(current − tx) / tx`, the **opposite** sign convention
+> for sales. Worth reconciling on the site — the card is now the clearer of the
+> two.
 
 ---
 
@@ -188,7 +201,7 @@ curl -X POST https://your-image-gen.onrender.com/generate-performance \
     "politician": "Nancy Pelosi",
     "party": "Democrat",
     "type": "achat",
-    "stock_move_pct": 30.0,
+    "performance_pct": 30.0,
     "benchmark_pct": 8.0,
     "benchmark_label": "S&P 500",
     "amount_min": 500000,
@@ -201,7 +214,7 @@ curl -X POST https://your-image-gen.onrender.com/generate-performance \
 
 Returns `{"imageUrl": "https://res.cloudinary.com/..."}`.
 
-`stock_move_pct` and `benchmark_pct` are both required and the route returns 400
+`performance_pct` and `benchmark_pct` are both required and the route returns 400
 without them — it will not render a bare return with nothing to compare it
 against. `/generate` (the old trade card) and `/generate-story` are untouched and
 still work.
