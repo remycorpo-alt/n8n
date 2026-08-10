@@ -3,8 +3,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Env vars required in n8n\n\n| Variable | Value |\n|---|---|\n| `INSIDER_OPTION_API_URL` | base URL of your backend |\n| `IMAGE_GENERATOR_URL` | your image-gen Render service URL |\n| `ANTHROPIC_API_KEY` | from console.anthropic.com |\n| `IG_USER_ID` | Instagram Business Account ID |\n| `IG_ACCESS_TOKEN` | long-lived IG access token |\n\n## Endpoints used (all already public)\n\n- `GET /api/quiver/transactions?limit=300` — recent filings **with** performance\n- `GET /api/sp500/historical?months=18` — SPY closes, fetched once for the pool\n- `GET /api/quiver/politicians` — resolves politicianId → name\n- `POST {IMAGE_GENERATOR_URL}/generate-performance`\n\n## Only trades that worked\n\n**Select Best Winner** publishes a filing only when all of these hold:\n\n| Threshold | Default |\n|---|---|\n| `MIN_FILER_RESULT_PCT` | 5 — the trade went their way by at least this |\n| `MIN_EDGE_VS_INDEX_PCT` | 2 — and beat the S&P over the same window |\n| `MAX_FILING_AGE_DAYS` | 90 — and is still recent enough to be news |\n| `MIN_HOURS_BETWEEN_POSTS` | 20 — at most one post a day |\n\nThe trigger polls every 15 min but the cadence guard allows one post a day, so a\nfailed run retries on the next tick instead of costing the whole day. The clock\nis stamped in **Record Published Ticker**, after Instagram accepts the post.\n\nTune them at the top of that node. If nothing clears, the run ends at\n*Skip — Nothing Qualifies* and the node logs a per-reason breakdown.\n\nIt reads a **pool** of recent filings, not just the newest one. Filtering the\nsingle newest filing would go dark for days whenever it happened to be a loser.\n\n## Why sales are negated\n\n`transactions.performance` answers \"did this go the filer's way?\" — for a sale\nthat means positive when the stock **fell** after they sold. So the filter uses\nit as-is for both directions, while the card negates sales to show what the\nstock actually did. Do not conflate the two.",
-        "height": 780,
+        "content": "## Env vars required in n8n\n\n| Variable | Value |\n|---|---|\n| `INSIDER_OPTION_API_URL` | base URL of your backend |\n| `IMAGE_GENERATOR_URL` | your image-gen Render service URL |\n| `ANTHROPIC_API_KEY` | from console.anthropic.com |\n| `IG_USER_ID` | Instagram Business Account ID |\n| `IG_ACCESS_TOKEN` | long-lived IG access token |\n\n## Endpoints used (all already public)\n\n- `GET /api/quiver/transactions?limit=300` — recent filings **with** performance\n- `GET /api/sp500/historical?months=18` — SPY closes, fetched once for the pool\n- `GET /api/quiver/politicians` — resolves politicianId → name\n- `POST {IMAGE_GENERATOR_URL}/generate-performance`\n\n## Only trades that worked\n\n**Select Best Winner** publishes a filing only when all of these hold:\n\n| Threshold | Default |\n|---|---|\n| `MIN_FILER_RESULT_PCT` | 5 — the trade went their way by at least this |\n| `MIN_EDGE_VS_INDEX_PCT` | 2 — and beat the S&P over the same window |\n| `MAX_FILING_AGE_DAYS` | 90 — and is still recent enough to be news |\n| `MIN_HOURS_BETWEEN_POSTS` | 20 — at most one post a day |\n\nThe trigger polls every 15 min but the cadence guard allows one post a day, so a\nfailed run retries on the next tick instead of costing the whole day. The clock\nis stamped in **Record Published Ticker**, after Instagram accepts the post.\n\nTune them at the top of that node. If nothing clears, the run ends at\n*Skip — Nothing Qualifies* and the node logs a per-reason breakdown.\n\nIt reads a **pool** of recent filings, not just the newest one. Filtering the\nsingle newest filing would go dark for days whenever it happened to be a loser.\n\n## Why sales are negated\n\n`transactions.performance` answers \"did this go the filer's way?\" — for a sale\nthat means positive when the stock **fell** after they sold. So the filter uses\nit as-is for both directions, while the card negates sales to show what the\nstock actually did. Do not conflate the two.\n\n## Keep the image generator warm\n\n`Cloudnary insta post` is on Render's **free** plan — it spins down after ~15 min\nidle and takes 50s+ to wake. Make sure **Render Keepalive** (`render-keepalive.json`,\npings `/health` every 10 min) is *Active* in n8n. The image node allows 180s so one\ncold start does not lose the day's post.",
+        "height": 880,
         "width": 440
       },
       "id": "sticky-setup",
@@ -264,7 +264,7 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, politician: $json.politician, party: $json.party, type: $json.type, performance_pct: $json.performance_pct, benchmark_pct: $json.benchmark_pct, benchmark_label: $json.benchmark_label, filer_edge_pct: $json.filer_edge_pct, amount_min: $json.amount_min, amount_max: $json.amount_max, trade_date: $json.trade_date, filed_date: $json.filed_date, tagline: $json.tagline, id: $json.id }) }}",
         "options": {
-          "timeout": 90000
+          "timeout": 180000
         }
       },
       "id": "7-gen-image",
@@ -277,7 +277,9 @@
       ],
       "retryOnFail": true,
       "maxTries": 2,
-      "waitBetweenTries": 5000
+      "waitBetweenTries": 5000,
+      "notes": "Render free plan: 50s+ cold start if render-keepalive.json is not Active. Timeout is 180s to survive one.",
+      "notesInFlow": false
     },
     {
       "parameters": {
