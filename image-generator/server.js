@@ -364,12 +364,279 @@ function drawStoryCard(trade) {
   return canvas.toBuffer('image/png');
 }
 
+
+/* ─── performance card ───────────────────────────────────── */
+
+const PERF_C = {
+  red:  '#F87171',   // downward move
+  gold: '#D9BD63',   // benchmark bar, neutral against the brand green
+};
+
+function formatPct(n) {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return '—';
+  const v = Number(n);
+  return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+}
+
+/*
+ * Performance card, same visual language as drawTradeCard.
+ *
+ * `performance_pct` is the SAME number the website shows for that trade — the
+ * stored `transactions.performance` column, which answers "did this go the
+ * filer's way?":
+ *
+ *   buy  → (current - tx) / tx     positive = the position is up
+ *   sell → (tx - current) / tx     positive = the stock FELL after they sold
+ *
+ * Keeping the card on the site's column matters more than internal tidiness: a
+ * post that says -22% for a trade the site's own table shows as +22% reads as a
+ * bug to anyone who clicks through. An earlier version of this card negated
+ * sales to show the stock's raw direction, and that is exactly the mismatch it
+ * produced.
+ *
+ * The cost is that a sale's positive number is easy to misread as "the stock went
+ * up", so the badge and the strip caption both say what it is in words. Do not
+ * reduce them to a bare percentage.
+ *
+ * It is the filer's window, NOT a follower's: the filing became public up to 45
+ * days later. That is why the lag is its own table row.
+ */
+function drawPerformanceCard(p) {
+  const W = 1080, H = 1080;
+  const cx = W / 2;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+
+  // Number(null), Number(undefined via '') and Number('') all coerce to 0, and 0
+  // is finite — so a bare Number.isFinite() guard lets a missing figure through
+  // and renders it as a confident "+0.0%". Reject the empty cases first.
+  const numeric = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+  if (!numeric(p.performance_pct)) throw new Error('performance_pct is required and must be numeric');
+  if (!numeric(p.benchmark_pct)) throw new Error('benchmark_pct is required — a return with no benchmark is not a measurement');
+
+  const perf  = Number(p.performance_pct);
+  const bench = Number(p.benchmark_pct);
+
+  const isBuy = /purchase|buy|achat/i.test(p.type || '');
+
+  // Background + vignette
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, W, H);
+  const vignette = ctx.createRadialGradient(cx, H * 0.5, H * 0.15, cx, H * 0.5, H * 0.72);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, W, H);
+
+  // Header kicker
+  const filed = formatDate(p.filed_date || p.trade_date);
+  ctx.font = `500 22px ${FONT}`;
+  ctx.fillStyle = C.green;
+  ctx.textAlign = 'center';
+  ctx.letterSpacing = '3px';
+  ctx.fillText(filed ? `TRADE PERFORMANCE · FILED ${filed}` : 'TRADE PERFORMANCE', cx, 96);
+  ctx.letterSpacing = '0px';
+
+  // Giant ticker
+  const ticker = (p.ticker || '???').toUpperCase();
+  const tickerSize = fitText(ctx, ticker, 920, 190, '900');
+  ctx.font = `900 ${tickerSize}px ${FONT}`;
+  ctx.fillStyle = C.green;
+  ctx.textAlign = 'center';
+  ctx.fillText(ticker, cx, 88 + tickerSize * 1.06);
+
+  // Badge — the filer's outcome, which is not the same as the stock's direction.
+  //
+  // After a SALE the stock falling IS the good result: they got out before the
+  // drop. Colouring the badge by the stock's direction painted a successful sale
+  // red and read as a loss — wrong, and self-defeating on a card that was chosen
+  // precisely because the trade worked. So the badge states the outcome and takes
+  // its colour from that, while the bars below stay strictly literal about what
+  // the stock and the index did.
+  // The column is already signed so that positive = it went their way, in both
+  // directions. The wording is what disambiguates a sale.
+  const up = perf >= 0;
+  const wentTheirWay = up;
+  const badgeLabel = isBuy
+    ? `${up ? '▲' : '▼'}  ${formatPct(perf)} SINCE BUY`
+    : up
+      ? `▲  ${formatPct(perf)} DROP AVOIDED`
+      : `▼  ${formatPct(Math.abs(perf))} MISSED AFTER SELLING`;
+  ctx.font = `600 26px ${FONT}`;
+  const badgeW = ctx.measureText(badgeLabel).width + 52;
+  const badgeY = 344;
+  const accent = wentTheirWay ? C.green : PERF_C.red;
+  roundRect(ctx, cx - badgeW / 2, badgeY, badgeW, 48, 8);
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = wentTheirWay ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)';
+  ctx.fill();
+  ctx.fillStyle = accent;
+  ctx.textAlign = 'center';
+  ctx.fillText(badgeLabel, cx, badgeY + 31);
+
+  // Two bars: the stock and the index over the same window
+  const bars = [
+    { label: ticker, value: perf, color: up ? C.green : PERF_C.red },
+    { label: (p.benchmark_label || 'S&P 500').toUpperCase(), value: bench, color: PERF_C.gold },
+  ];
+
+  const stripX = 55, stripW = W - 110, stripY = 424, barH = 40, barGap = 26;
+  const stripH = bars.length * barH + (bars.length - 1) * barGap + 84;
+  roundRect(ctx, stripX, stripY, stripW, stripH, 16);
+  ctx.fillStyle = C.card;
+  ctx.fill();
+  ctx.strokeStyle = C.cardBorder;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Shared scale and a common zero, so a loss reads as a loss
+  const labelW = 200;
+  const plotX = stripX + 32 + labelW;
+  const plotW = stripW - 64 - labelW - 120;
+  const maxAbs = Math.max(...bars.map(b => Math.abs(b.value)), 1);
+  const hasNeg = bars.some(b => b.value < 0);
+  const zeroX = hasNeg ? plotX + plotW / 2 : plotX;
+  const scale = hasNeg ? plotW / (maxAbs * 2) : plotW / maxAbs;
+
+  bars.forEach((b, i) => {
+    const y = stripY + 30 + i * (barH + barGap);
+    ctx.font = `700 26px ${FONT}`;
+    ctx.fillStyle = C.white;
+    ctx.textAlign = 'left';
+    ctx.fillText(b.label, stripX + 32, y + barH / 2 + 9);
+
+    const len = Math.abs(b.value) * scale;
+    roundRect(ctx, b.value >= 0 ? zeroX : zeroX - len, y, Math.max(len, 3), barH, 5);
+    ctx.fillStyle = b.color;
+    ctx.fill();
+
+    ctx.fillStyle = b.color;
+    ctx.textAlign = 'left';
+    ctx.fillText(formatPct(b.value), zeroX + (hasNeg ? plotW / 2 : plotW) + 22, y + barH / 2 + 9);
+  });
+
+  if (hasNeg) {
+    ctx.strokeStyle = C.rowLine;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(zeroX, stripY + 22);
+    ctx.lineTo(zeroX, stripY + stripH - 54);
+    ctx.stroke();
+  }
+
+  // Price basis, inside the image rather than only in the caption
+  ctx.font = `500 19px ${FONT}`;
+  ctx.fillStyle = C.dimGreen;
+  ctx.textAlign = 'center';
+  ctx.letterSpacing = '1px';
+  // The bars are literal, so on a sale the reader needs telling which direction
+  // was the good one — otherwise a red stock bar next to a green badge looks
+  // like a contradiction rather than the point.
+  ctx.fillText(
+    isBuy
+      ? 'MEASURED FROM THE DISCLOSED TRANSACTION PRICE'
+      : 'THE DROP AVOIDED SINCE THE DISCLOSED SALE PRICE',
+    cx,
+    stripY + stripH - 22,
+  );
+  ctx.letterSpacing = '0px';
+
+  // Detail table
+  const lagDays = p.trade_date && p.filed_date
+    ? Math.round((new Date(p.filed_date) - new Date(p.trade_date)) / 86400000)
+    : null;
+
+  const rows = [];
+  if (p.politician) rows.push({ label: 'NAME', value: p.politician });
+  rows.push({ label: 'ORDER', value: isBuy ? 'Buy' : 'Sell' });
+  if (p.amount_min || p.amount_max) {
+    rows.push({ label: 'AMOUNT', value: formatAmount(p.amount_min, p.amount_max), green: true });
+  }
+  if (lagDays !== null && lagDays >= 0) {
+    rows.push({ label: 'REPORTING LAG', value: `${lagDays} days`, green: true });
+  }
+
+  const rowH = 58;
+  const tableY = stripY + stripH + 26;
+  const tableX = 55, tableW = W - 110, tableH = rows.length * rowH + 2;
+  roundRect(ctx, tableX, tableY, tableW, tableH, 16);
+  ctx.fillStyle = C.card;
+  ctx.fill();
+  ctx.strokeStyle = C.cardBorder;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  rows.forEach((row, i) => {
+    const y = tableY + i * rowH;
+    if (i > 0) {
+      ctx.strokeStyle = C.rowLine;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tableX + 32, y);
+      ctx.lineTo(tableX + tableW - 32, y);
+      ctx.stroke();
+    }
+    const midY = y + rowH / 2 + 9;
+    ctx.font = `500 17px ${FONT}`;
+    ctx.fillStyle = C.dimGreen;
+    ctx.textAlign = 'left';
+    ctx.letterSpacing = '2px';
+    ctx.fillText(row.label, tableX + 40, midY);
+    ctx.letterSpacing = '0px';
+    ctx.font = `700 26px ${FONT}`;
+    ctx.fillStyle = row.green ? C.green : C.white;
+    ctx.fillText(row.value, tableX + 270, midY);
+  });
+
+  // Tagline — describes the data, never the filer's state of mind
+  const tagline = p.tagline || (lagDays !== null ? `Filed ${lagDays} days after the trade.` : 'Disclosed weeks late.');
+  const tagSize = fitText(ctx, tagline, 900, 50, 'bold');
+  const taglineY = tableY + tableH + 62;
+  ctx.font = `bold ${tagSize}px ${FONT}`;
+  ctx.fillStyle = C.white;
+  ctx.textAlign = 'center';
+  ctx.fillText(tagline, cx, taglineY);
+
+  // Footer
+  ctx.font = `400 23px ${FONT}`;
+  ctx.fillStyle = C.subGreen;
+  ctx.textAlign = 'center';
+  ctx.fillText(`Track ${guessPronoun(p.politician || '')} next trade · insideroption.com ↗`, cx, taglineY + 46);
+
+  return canvas.toBuffer('image/png');
+}
+
 /* ─── HTTP server ────────────────────────────────────────── */
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/generate-performance') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const png = drawPerformanceCard(JSON.parse(body));
+        if (process.env.CLOUDINARY_CLOUD_NAME) {
+          const imageUrl = await uploadToCloudinary(png);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ imageUrl }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': png.length });
+          res.end(png);
+        }
+      } catch (e) {
+        console.error(e);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
 
